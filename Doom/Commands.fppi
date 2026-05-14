@@ -1,0 +1,47 @@
+# ----------------------------------------------------------------------
+# Doom component commands
+# ----------------------------------------------------------------------
+
+@ Start the wrapped DOOM engine. Calls doomgeneric_Create which loads
+@ the WAD and runs DOOM's initialisation through to the first idle
+@ tick before returning. After this command completes, the rate-group
+@ thread (via the schedIn port) drives doomgeneric_Tick.
+async command Start \
+  opcode 0
+
+@ Press and release a named DOOM key in a single tick. Useful for menu
+@ navigation, weapon select, and one-shot inputs from command sequences.
+async command KeyTap(
+                      key: Doom.DoomKey
+                    ) \
+  opcode 1
+
+@ Press and hold a named DOOM key. The key remains held until a
+@ matching KeyUp is issued or until the engine is stopped. Mirrors a
+@ real keyboard well enough for "walk forward + fire" kinds of inputs
+@ from a command sequence.
+async command KeyDown(
+                       key: Doom.DoomKey
+                     ) \
+  opcode 2
+
+@ Release a previously held DOOM key. Safe to issue when the key is
+@ not currently held.
+async command KeyUp(
+                     key: Doom.DoomKey
+                   ) \
+  opcode 3
+
+@ Press or release a raw DOOM key code, bypassing the named enum.
+@ Use this from the GDS keyboard plugin to forward arbitrary keys
+@ (numeric digits, characters, etc.) without growing the enum.
+async command RawKey(
+                      pressed: bool
+                      code: U8
+                    ) \
+  opcode 4
+
+@ Stop the wrapped DOOM engine cooperatively. The rate group will
+@ stop driving Tick and FrameOut telemetry will cease.
+async command Stop \
+  opcode 5

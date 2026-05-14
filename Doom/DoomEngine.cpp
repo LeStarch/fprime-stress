@@ -1,0 +1,432 @@
+// ======================================================================
+// \title  Doom.cpp
+// \brief  F Prime DOOM engine wrapper - implementation.
+//
+// The engine is driven from a Svc.Sched input port. The schedIn handler
+// invokes doomgeneric_Tick(); upstream doomgeneric calls back into the
+// extern "C" DG_* hooks at the bottom of this file, which delegate to
+// the singleton DoomEngine instance.
+//
+// Cross-thread communication is limited to the key queue: command
+// handlers run on the active component thread and only enqueue key
+// events under m_keyMutex; the rate-group thread drains the queue
+// inside DG_GetKey. No other state is shared across threads.
+// ======================================================================
+#include "Doom/DoomEngine.hpp"
+
+#include "Doom/FppConstantsAc.hpp"
+
+#include <Fw/Types/Assert.hpp>
+#include <Fw/Time/TimeInterval.hpp>
+
+#include <cstring>
+
+extern "C" {
+#include "Doom/doomgeneric/doomgeneric.h"
+struct color {
+    unsigned b : 8;
+    unsigned g : 8;
+    unsigned r : 8;
+    unsigned a : 8;
+};
+extern struct color colors[256];
+}  // extern "C"
+
+namespace Doom {
+
+DoomEngine* DoomEngine::s_instance = nullptr;
+
+// ----------------------------------------------------------------------
+// Construction / destruction
+// ----------------------------------------------------------------------
+
+DoomEngine::DoomEngine(const char* compName)
+    : DoomEngineComponentBase(compName),
+      m_paletteGeneration(0),
+      m_lastEmittedPaletteGeneration(0),
+      m_framesProduced(0),
+      m_engineRunning(false),
+      m_engineStartValid(false),
+      m_keyQueueHead(0),
+      m_keyQueueTail(0),
+      m_keyQueueCount(0),
+      m_overflowReported(false),
+      m_keysDropped(0) {
+    FW_ASSERT(s_instance == nullptr);
+    s_instance = this;
+
+    (void)::memset(m_pendingPalette, 0, sizeof(m_pendingPalette));
+    (void)::memset(m_keyQueue, 0, sizeof(m_keyQueue));
+    (void)::memset(m_wadPath, 0, sizeof(m_wadPath));
+    (void)::memset(m_argvStorage, 0, sizeof(m_argvStorage));
+}
+
+DoomEngine::~DoomEngine() {
+    s_instance = nullptr;
+}
+
+DoomEngine* DoomEngine::getInstance() {
+    return s_instance;
+}
+
+void DoomEngine::setWadPath(const char* wadPath) {
+    FW_ASSERT(wadPath != nullptr);
+    const FwSizeType len = static_cast<FwSizeType>(::strlen(wadPath));
+    const FwSizeType copy = (len < (WAD_PATH_MAX - 1U)) ? len : (WAD_PATH_MAX - 1U);
+    (void)::memcpy(m_wadPath, wadPath, copy);
+    m_wadPath[copy] = '\0';
+}
+
+// ----------------------------------------------------------------------
+// schedIn: one Tick per rate-group invocation
+// ----------------------------------------------------------------------
+
+void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
+    if (!m_engineRunning) {
+        // Engine not started - publish IDLE state heartbeat.
+        this->tlmWrite_State(EngineState::OFF);
+        return;
+    }
+    // Drive one DOOM frame of game logic. upstream doomgeneric will
+    // call back into DG_GetKey / DG_DrawFrame on this same thread.
+    doomgeneric_Tick();
+
+    // Refresh derived telemetry. FrameOut / PaletteOut are emitted from
+    // DG_DrawFrame which runs inside Tick above.
+    this->tlmWrite_State(EngineState::RUNNING);
+    this->tlmWrite_FrameCount(m_framesProduced);
+
+    m_keyMutex.lock();
+    const U8 depth = static_cast<U8>(m_keyQueueCount);
+    const U32 dropped = m_keysDropped;
+    m_keyMutex.unLock();
+    this->tlmWrite_KeyQueueDepth(depth);
+    this->tlmWrite_KeyEventsDropped(dropped);
+    this->tlmWrite_FramesDropped(0U);  // No frame drops in pull model.
+}
+
+// ----------------------------------------------------------------------
+// Commands
+// ----------------------------------------------------------------------
+
+void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
+    if (m_engineRunning) {
+        this->log_WARNING_LO_AlreadyRunning();
+        this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::EXECUTION_ERROR);
+        return;
+    }
+    this->tlmWrite_State(EngineState::STARTING);
+
+    // Initialise reference time used by DG_GetTicksMs.
+    const Os::RawTime::Status rt = m_engineStart.now();
+    m_engineStartValid = (rt == Os::RawTime::Status::OP_OK);
+
+    // Build argv pointing into m_argvStorage which has component lifetime.
+    const char* argv[8] = {nullptr};
+    const int argc = this->buildEngineArgv(argv, 8);
+
+    // doomgeneric_Create initialises the engine and runs through to the
+    // first idle Tick before returning - so when this call returns, the
+    // engine is ready to be driven by the rate group.
+    doomgeneric_Create(argc, const_cast<char**>(argv));
+
+    m_engineRunning = true;
+    this->log_ACTIVITY_HI_EngineStarted();
+    this->tlmWrite_State(EngineState::RUNNING);
+    this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
+}
+
+void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
+    // Cooperative stop - the rate group will simply stop calling Tick.
+    // DOOM has no clean shutdown path, so we just stop driving it.
+    if (m_engineRunning) {
+        m_engineRunning = false;
+        this->log_ACTIVITY_HI_EngineStopped();
+    }
+    this->tlmWrite_State(EngineState::OFF);
+    this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
+}
+
+void DoomEngine::KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+    const U8 code = static_cast<U8>(key.e);
+    const bool downOk = this->enqueueKey(true, code);
+    const bool upOk = this->enqueueKey(false, code);
+    const Fw::CmdResponse response = (downOk && upOk) ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR;
+    this->cmdResponse_out(opCode, cmdSeq, response);
+}
+
+void DoomEngine::KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+    const bool ok = this->enqueueKey(true, static_cast<U8>(key.e));
+    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+}
+
+void DoomEngine::KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+    const bool ok = this->enqueueKey(false, static_cast<U8>(key.e));
+    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+}
+
+void DoomEngine::RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed, U8 code) {
+    const bool ok = this->enqueueKey(pressed, code);
+    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+}
+
+// ----------------------------------------------------------------------
+// Parallel input port handlers
+//
+// Mirror the key-input commands so other components (e.g. a sensor
+// adapter, a sequencer macro) can drive inputs directly. Same enqueue
+// path as the command handlers; key-queue overflow is reported via the
+// KeyQueueOverflow event the same way.
+// ----------------------------------------------------------------------
+
+void DoomEngine::keyTapIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
+    const U8 code = static_cast<U8>(key.e);
+    (void)this->enqueueKey(true, code);
+    (void)this->enqueueKey(false, code);
+}
+
+void DoomEngine::keyDownIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
+    (void)this->enqueueKey(true, static_cast<U8>(key.e));
+}
+
+void DoomEngine::keyUpIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
+    (void)this->enqueueKey(false, static_cast<U8>(key.e));
+}
+
+void DoomEngine::rawKeyIn_handler(FwIndexType /*portNum*/, bool pressed, U8 code) {
+    (void)this->enqueueKey(pressed, code);
+}
+
+// ----------------------------------------------------------------------
+// Key queue helpers
+// ----------------------------------------------------------------------
+
+bool DoomEngine::enqueueKey(bool pressed, U8 code) {
+    bool ok = false;
+    bool emitOverflow = false;
+    m_keyMutex.lock();
+    if (m_keyQueueCount < KEY_QUEUE_CAPACITY) {
+        const U16 entry = static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
+        m_keyQueue[m_keyQueueTail] = entry;
+        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
+        m_keyQueueCount++;
+        m_overflowReported = false;
+        ok = true;
+    } else {
+        m_keysDropped++;
+        if (!m_overflowReported) {
+            m_overflowReported = true;
+            emitOverflow = true;
+        }
+    }
+    m_keyMutex.unLock();
+    if (emitOverflow) {
+        this->log_WARNING_LO_KeyQueueOverflow();
+    }
+    return ok;
+}
+
+bool DoomEngine::platformGetKey(bool& pressed, U8& code) {
+    bool drained = false;
+    m_keyMutex.lock();
+    if (m_keyQueueCount > 0U) {
+        const U16 entry = m_keyQueue[m_keyQueueHead];
+        m_keyQueueHead = (m_keyQueueHead + 1U) % KEY_QUEUE_CAPACITY;
+        m_keyQueueCount--;
+        pressed = ((entry >> 8) & 0x01U) != 0U;
+        code = static_cast<U8>(entry & 0xFFU);
+        drained = true;
+    }
+    m_keyMutex.unLock();
+    return drained;
+}
+
+// ----------------------------------------------------------------------
+// Platform glue (called inside doomgeneric_Tick on rate-group thread)
+// ----------------------------------------------------------------------
+
+void DoomEngine::platformInit() {
+    // Nothing extra to do; component construction already prepared
+    // every backing buffer.
+}
+
+void DoomEngine::platformDrawFrame() {
+    // Upstream allocates DG_ScreenBuffer as RESX * RESY * 4 bytes; with
+    // CMAP256 only the first RESX * RESY bytes are written and they are
+    // 8-bit palette indices.
+    FW_ASSERT(DG_ScreenBuffer != nullptr);
+    const U8* const src = reinterpret_cast<const U8*>(DG_ScreenBuffer);
+
+    m_framesProduced++;
+    this->capturePaletteIfChanged();
+
+    Doom::FrameChunk chunk;
+    chunk.set_width(FRAME_WIDTH);
+    chunk.set_frame(m_framesProduced);
+    U8* const chunkPixels = chunk.get_pixels();
+    const U16 totalRows = FRAME_HEIGHT;
+    U16 rowsRemaining = totalRows;
+    U16 currentRow = 0;
+    while (rowsRemaining > 0U) {
+        const U16 rowsThisChunk =
+            (rowsRemaining >= ROWS_PER_CHUNK) ? ROWS_PER_CHUNK : rowsRemaining;
+        const U32 bytesThisChunk = static_cast<U32>(rowsThisChunk) * static_cast<U32>(FRAME_WIDTH);
+        const U32 offset = static_cast<U32>(currentRow) * static_cast<U32>(FRAME_WIDTH);
+        (void)::memcpy(chunkPixels, &src[offset], bytesThisChunk);
+        if (bytesThisChunk < static_cast<U32>(Doom::FRAME_CHUNK_BYTES)) {
+            (void)::memset(&chunkPixels[bytesThisChunk], 0,
+                           static_cast<U32>(Doom::FRAME_CHUNK_BYTES) - bytesThisChunk);
+        }
+        chunk.set_row(currentRow);
+        chunk.set_rowCount(rowsThisChunk);
+        this->tlmWrite_FrameOut(chunk);
+        currentRow = static_cast<U16>(currentRow + rowsThisChunk);
+        rowsRemaining = static_cast<U16>(rowsRemaining - rowsThisChunk);
+    }
+
+    if (m_paletteGeneration != m_lastEmittedPaletteGeneration) {
+        Doom::Palette pal;
+        pal.set_generation(m_paletteGeneration);
+        U8* const dest = pal.get_rgb();
+        (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
+        this->tlmWrite_PaletteOut(pal);
+        m_lastEmittedPaletteGeneration = m_paletteGeneration;
+    }
+}
+
+void DoomEngine::capturePaletteIfChanged() {
+    bool changed = false;
+    for (FwSizeType i = 0; i < 256; ++i) {
+        const U8 r = static_cast<U8>(colors[i].r);
+        const U8 g = static_cast<U8>(colors[i].g);
+        const U8 b = static_cast<U8>(colors[i].b);
+        const FwSizeType base = i * 3U;
+        if ((m_pendingPalette[base] != r) ||
+            (m_pendingPalette[base + 1U] != g) ||
+            (m_pendingPalette[base + 2U] != b)) {
+            m_pendingPalette[base] = r;
+            m_pendingPalette[base + 1U] = g;
+            m_pendingPalette[base + 2U] = b;
+            changed = true;
+        }
+    }
+    if (changed) {
+        m_paletteGeneration++;
+    }
+}
+
+void DoomEngine::platformSleepMs(U32 ms) const {
+    // Intentional no-op: rate group provides pacing.
+    (void)ms;
+}
+
+U32 DoomEngine::platformGetTicksMs() {
+    if (!m_engineStartValid) {
+        return 0U;
+    }
+    Os::RawTime current;
+    const Os::RawTime::Status nowStatus = current.now();
+    if (nowStatus != Os::RawTime::Status::OP_OK) {
+        return 0U;
+    }
+    U32 deltaUsec = 0U;
+    const Os::RawTime::Status diffStatus = current.getDiffUsec(m_engineStart, deltaUsec);
+    if (diffStatus != Os::RawTime::Status::OP_OK) {
+        return 0U;
+    }
+    return deltaUsec / 1000U;
+}
+
+void DoomEngine::platformSetTitle(const char* title) {
+    // DG_SetWindowTitle is purely informational for a real desktop
+    // build; the flight wrap has no window. Ignored.
+    (void)title;
+}
+
+// ----------------------------------------------------------------------
+// argv synthesis for doomgeneric_Create
+// ----------------------------------------------------------------------
+
+int DoomEngine::buildEngineArgv(const char** argv, int maxArgv) {
+    FW_ASSERT(argv != nullptr);
+    int argc = 0;
+    // argv[0]: process name. doomgeneric inspects argv[0] only for the
+    // logging banner; the value is otherwise unused.
+    (void)::memcpy(m_argvStorage[argc], "doom", 5U);
+    argv[argc] = m_argvStorage[argc];
+    argc++;
+
+    if ((m_wadPath[0] != '\0') && (argc + 1 < maxArgv)) {
+        const char iwadFlag[] = "-iwad";
+        (void)::memcpy(m_argvStorage[argc], iwadFlag, sizeof(iwadFlag));
+        argv[argc] = m_argvStorage[argc];
+        argc++;
+        const FwSizeType len = static_cast<FwSizeType>(::strlen(m_wadPath));
+        const FwSizeType copy = (len < (WAD_PATH_MAX - 1U)) ? len : (WAD_PATH_MAX - 1U);
+        (void)::memcpy(m_argvStorage[argc], m_wadPath, copy);
+        m_argvStorage[argc][copy] = '\0';
+        argv[argc] = m_argvStorage[argc];
+        argc++;
+    }
+    return argc;
+}
+
+}  // namespace Doom
+
+// ======================================================================
+// extern "C" DG_* hooks consumed by upstream doomgeneric
+// ======================================================================
+extern "C" {
+
+void DG_Init(void) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if (inst != nullptr) {
+        inst->platformInit();
+    }
+}
+
+void DG_DrawFrame(void) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if (inst != nullptr) {
+        inst->platformDrawFrame();
+    }
+}
+
+void DG_SleepMs(uint32_t ms) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if (inst != nullptr) {
+        inst->platformSleepMs(static_cast<U32>(ms));
+    }
+}
+
+uint32_t DG_GetTicksMs(void) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if (inst != nullptr) {
+        return static_cast<uint32_t>(inst->platformGetTicksMs());
+    }
+    return 0U;
+}
+
+int DG_GetKey(int* pressed, unsigned char* key) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if ((inst == nullptr) || (pressed == nullptr) || (key == nullptr)) {
+        return 0;
+    }
+    bool pressedFlag = false;
+    U8 code = 0U;
+    if (!inst->platformGetKey(pressedFlag, code)) {
+        return 0;
+    }
+    *pressed = pressedFlag ? 1 : 0;
+    *key = static_cast<unsigned char>(code);
+    return 1;
+}
+
+void DG_SetWindowTitle(const char* title) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    if (inst != nullptr) {
+        inst->platformSetTitle(title);
+    }
+}
+
+}  // extern "C"

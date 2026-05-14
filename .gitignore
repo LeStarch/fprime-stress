@@ -1,0 +1,5 @@
+build-fprime-automatic-*/
+build-artifacts/
+*.pyc
+__pycache__/
+.vscode/
