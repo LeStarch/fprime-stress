@@ -1,74 +1,232 @@
 # fprime-stress
 
-An F Prime library that wraps the open-source DOOM engine
-([doomgeneric](https://github.com/ozkl/doomgeneric)) as a single
-F Prime active component, together with an `F Prime subtopology` that
-lets any deployment absorb the whole DOOM subsystem in one declaration.
+## But does it run DOOM?
 
-This library is the source-of-truth for the Doom component and its
-subtopology. A companion deployment lives at
+Yes. Specifically, F Prime runs DOOM.
+
+This repository is the source-of-truth for a single F Prime active
+component — `Doom::DoomEngine` — that wraps id Software's DOOM (via
+the embeddable [`doomgeneric`](https://github.com/ozkl/doomgeneric)
+port) inside the same component-and-port framework that flies the
+[Mars helicopter](https://nasa.github.io/fprime/UsersGuide/best/ingenuity.html),
+the [LCRD optical comm payload](https://www.nasa.gov/directorates/somd/space-communications-navigation-program/lcrd/),
+and a long list of other JPL spacecraft. Together with the companion
+deployment at
 [`JPL-Devin/fprime-stress-reference`](https://github.com/JPL-Devin/fprime-stress-reference)
-and stitches it together with the standard F Prime services
-(CdhCore + ComCcsds + FileHandling + CmdSequencer).
+it produces a flight-software-shaped binary that boots, loads a WAD,
+renders frames into telemetry, and accepts commands as keystrokes.
+
+## Why this matters for embedded systems
+
+"Can it run DOOM?" started as a joke and became a load-bearing
+engineering ritual. The bar is famously low — id's 1993 game ran on a
+386 with 4 MB of RAM and no GPU — and yet it exercises **almost every
+non-trivial subsystem an embedded developer cares about**:
+
+| DOOM does this | Which exercises this in flight software |
+|-|-|
+| Renders ~35 fps of palette-indexed frames | Sustained periodic data production |
+| Streams 8-bit screen buffers + a 256-entry palette | Bulk telemetry / downlink bandwidth |
+| Reads keyboard events asynchronously | Asynchronous commanding / uplink |
+| Plays through demo lump on tic-by-tic logic | Deterministic rate-group execution |
+| Reads its WAD through a single file API | File-system / storage abstraction |
+| Uses one global zone allocator | Memory-pool discipline at init time |
+
+If you can host DOOM, you've demonstrated periodic scheduling, bulk
+telemetry, command dispatching, file I/O, and bounded memory — the
+same primitives a CubeSat needs to operate. Which is exactly why
+"runs DOOM" has been the embedded engineer's smoke test on Casio
+watches, MIDI keyboards, Voyager-era ROMs, TI-Nspire calculators,
+McDonald's POS terminals, John Deere tractors, the Touch Bar on a
+2018 MacBook Pro, [a pregnancy test](https://twitter.com/Foone/status/1302820468819288066),
+and — now — F Prime.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph LinuxTimer[LinuxTimer @ 100 Hz]
+        T[CycleOut]
+    end
+    subgraph RGD[RateGroupDriver]
+        D{divider}
+    end
+    subgraph RG1[rateGroup1Comp @ 33 Hz]
+        S1[schedIn fan-out]
+    end
+    subgraph DoomSubtopology
+        DE[DoomEngine<br/>active]
+        BM[BufferManager]
+    end
+    subgraph CmdSeq[Svc.CmdSequencer]
+        CS[KeyDown / KeyUp /<br/>KeyTap / RawKey]
+    end
+    subgraph Telem[Telemetry path]
+        TC[TlmChan]
+        CCSDS[ComCcsds<br/>SpacePacketFramer]
+        NET[Drv.TcpClient]
+    end
+    subgraph GDS[fprime-gds<br/>+ JS doom-display plugin]
+        CANVAS[Canvas viewer]
+        KBD[Browser keydown/keyup]
+    end
+
+    T --> D
+    D -- "/3 ≈ 33 Hz" --> S1
+    S1 -- schedIn --> DE
+    CS -- key cmds / parallel ports --> DE
+    DE -- FrameOut chunks --> TC
+    DE -- PaletteOut --> TC
+    DE -- FrameRateHz<br/>FrameDataRateBps<br/>InputCommandRateHz<br/>InputDataRateBps --> TC
+    TC --> CCSDS --> NET --> GDS
+    KBD -- HTTP --> CS
+    GDS --> CANVAS
+    DE -.uses.-> BM
+```
+
+DOOM's frame buffer (640 × 400 palette-indexed pixels = **256 kB per
+frame**) is too large to ship as a single FPP telemetry sample
+under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (4 kB by default).
+We chunk it: each `Doom.FrameChunk` carries five complete scan lines
+(5 × 640 = 3,200 bytes of pixel data) plus a small header. Eighty
+chunks per frame, 33 frames per second, 2,640 chunks per second of
+sustained downlink — every one of those is a real F Prime message
+flowing through the real F Prime telemetry pipeline.
+
+## Why this is an excellent stress test
+
+A stress test is only interesting if it exercises the system *the way
+the system is meant to be exercised in flight*. This one does:
+
+1. **Periodic, hard-real-time scheduling**. The deployment's
+   `LinuxTimer` produces a 100 Hz base cycle; `RateGroupDriver`
+   divides that into a 33 Hz / 10 Hz / 1 Hz triple. DOOM lives on
+   the 33 Hz group. If the rate group can't service its cycle on
+   time, we get `RateGroupCycleSlip` warnings — exactly the
+   telemetry a mission operator would inspect when the spacecraft
+   is overloaded.
+
+2. **Sustained bulk downlink**. Each rate-group tick produces 80
+   serialized FPP messages of ~3.2 kB plus a palette and four rate
+   channels. That is **~8.5 MB/s** flowing through `TlmChan` →
+   `ComCcsds` → `Drv.TcpClient`. The CCSDS framer's
+   `TmFrameFixedSize` is dimensioned to swallow it. Saturating the
+   downlink under load is the whole point.
+
+3. **Asynchronous uplink**. The JS GDS plugin captures browser
+   keystrokes and POSTs them to the command dispatcher, which fans
+   into both the regular F Prime command handlers and the parallel
+   `sync input ports` (`keyTapIn` / `keyDownIn` / `keyUpIn` /
+   `rawKeyIn`) — a deliberate fan-in surface so that a future
+   IMU/sensor adapter could drive DOOM inputs the way a star
+   tracker drives an attitude estimator. The same mutex-guarded
+   key queue serves both paths.
+
+4. **Bounded memory**. Every cross-thread buffer is a fixed-size
+   member of `DoomEngine`. The component's `BufferManager` pool is
+   sized at init time. The only runtime `malloc` lives inside
+   doomgeneric's own zone allocator and is performed exactly once
+   on `Start` — i.e. allocate-at-init followed by zero-malloc
+   steady state, which is the discipline most JPL fault-tolerant
+   missions impose on flight code.
+
+5. **Measurable**. Four telemetry channels report the resulting
+   workload back to the ground every second:
+
+   | Channel | Type | Meaning |
+   |-|-|-|
+   | `FrameRateHz` | F32 | Frames produced per second |
+   | `FrameDataRateBps` | U32 | Downlink B/s emitted as frame / palette telemetry |
+   | `InputCommandRateHz` | F32 | Key events delivered per second |
+   | `InputDataRateBps` | U32 | Uplink B/s arriving as key events |
+
+   These are graphable in the GDS Channels tab and trip nicely past
+   8 MB/s during gameplay. The same numbers are emitted as a
+   `RateWindow` event so a headless smoke-test run can witness the
+   workload without a GDS attached.
+
+## Running it
+
+```bash
+# 1) Get the shareware WAD (Apache-2.0 helper, stdlib-only Python)
+pip install ./tools/fprime-get-doom
+fprime-get-doom -o /var/lib/fprime/doom1.wad
+
+# 2) Build & launch the reference deployment
+cd ../fprime-stress-reference
+fprime-util generate && fprime-util build
+./build-artifacts/Linux/FprimeStressReference/bin/FprimeStressReference \
+    -w /var/lib/fprime/doom1.wad -S
+
+# 3) (optional) install the JS GDS plugin so you can watch
+cd ../fprime-stress/gds-plugin/doom-display
+./install.sh
+```
+
+`-S` is a smoke-test convenience that auto-starts the engine from
+`main()` so you don't need a GDS attached to issue `doom.Start`. In
+normal operation a sequence or a GDS operator sends `doom.Start`.
 
 ## Contents
 
 ```
-Doom/                           - DoomEngine component
+Doom/                           DoomEngine component
   Doom.fpp / Doom.cpp / Doom.hpp
-  Commands.fppi
-  Telemetry.fppi
-  Events.fppi
-  doomgeneric/                  - vendored upstream DOOM source (GPLv2)
-DoomSubtopology/                - reusable subtopology wrapper
+  Commands.fppi / Telemetry.fppi / Events.fppi
+  doomgeneric/                  vendored upstream DOOM source (GPLv2)
+  test/ut/                      googletest unit tests
+DoomSubtopology/                reusable subtopology wrapper
   DoomSubtopology.fpp
-  DoomSubtopologyConfig/
-  SubtopologyTopologyDefs.hpp
-  PingEntries.hpp
-gds-plugin/                     - JS-only fprime-gds addon
-  doom-display/                 - Vue component, dashboard
-  install.sh                    - one-shot installer
-THIRDPARTY/                     - upstream license attribution
-LICENSE                         - root license (GPLv2; see below)
+  DoomSubtopologyConfig/        per-subtopology constants
+gds-plugin/                     JS-only fprime-gds addon
+  doom-display/                 Vue component + dashboard.xml
+  install.sh
+tools/
+  fprime-get-doom/              Apache-2.0 fetch-and-verify helper
+THIRDPARTY/                     upstream license attribution
+LICENSE                         root license (GPLv2; see Licensing)
 ```
 
-## Architecture
+## Memory & threading
 
-* The component is **driven from the rate group**. The deployment
-  wires a `Svc.Sched` member output of a rate group to
-  `DoomSubtopology.Subtopology.schedIn`; each pulse runs one
-  `doomgeneric_Tick()` (one DOOM frame of game logic) on the
-  rate-group thread. Pace the rate group at ~30 Hz to match DOOM's
-  native 35 fps cadence.
-* `doomgeneric_Create()` runs **synchronously** in the `Start`
-  command handler. When it returns, the engine is initialised and the
-  rate group can start driving it.
-* The frame buffer is published as `FrameOut` telemetry of type
-  `Doom.FrameChunk` (rows packed into ~3 KB chunks). The palette is
-  published as `PaletteOut` whenever it changes.
-* Inputs arrive as `KeyTap` / `KeyDown` / `KeyUp` / `RawKey`
-  commands and are translated into queue entries that DOOM consumes
-  through `DG_GetKey`. The key queue is the only piece of
-  cross-thread state and is guarded by `Os::Mutex`.
-* All status output uses **FPP events** (`EngineStarted`,
-  `EngineStopped`, `KeyQueueOverflow`, `AlreadyRunning`) - no
-  direct `Fw::Logger` calls.
+Every working buffer (frame buffer, palette, key queue, argv) is a
+fixed-size member of the `DoomEngine` instance. Nothing in the F Prime
+glue calls `malloc` after init. doomgeneric's own `Z_Init` arena is
+allocated exactly once from inside upstream code we deliberately do
+not modify; the F Prime glue itself is malloc-free in steady state.
 
-## Memory
-
-The component reserves all of its working buffers (frame buffer,
-palette, key queue, argv storage) as fixed-size members inside the
-DoomEngine instance. Nothing in the F Prime glue calls `malloc` after
-initialisation. doomgeneric's own `Z_Init` zone arena is the only
-remaining heap call and it is performed once on the first `Start`
-command from inside upstream source we deliberately do not modify.
+The DoomEngine is an **active component** but `schedIn` is declared
+`async drop`, so the rate-group thread enqueues a tick and returns
+immediately — DOOM runs on its own thread. The component queue is
+sized to absorb several seconds of pacing bursts; overflow drops a
+tick rather than blocking the rate group, which is the right
+behaviour when the workload is genuinely heavier than the schedule.
 
 ## Licensing
 
-Upstream doomgeneric is vendored verbatim under `Doom/doomgeneric/`
-and is GPLv2 (see `Doom/doomgeneric/COPYING`). Because the final
-deployment binary links this code, the whole binary is GPLv2. The new
-F Prime glue (the DoomEngine component, the DoomSubtopology, and the
-GDS plugin) is GPLv2 to match the linked work. The F Prime framework
-itself is unchanged Apache-2.0. See `LICENSE` and
-`THIRDPARTY/doomgeneric.md` for the full discussion.
+* Upstream doomgeneric is vendored under `Doom/doomgeneric/` verbatim
+  and is GPLv2 (`Doom/doomgeneric/COPYING`).
+* The new F Prime glue (DoomEngine, DoomSubtopology, GDS plugin) is
+  GPLv2 because the final linked binary inherits GPLv2.
+* The `fprime-get-doom` helper is Apache-2.0 (no DOOM code links into
+  the helper).
+* The F Prime framework itself is unmodified Apache-2.0.
+
+The shareware DOOM1.WAD is *not* committed to this repo — see
+`tools/fprime-get-doom/README.md` for the rationale and the SHA-256
+pin used to verify mirror downloads.
+
+## Scientific, and fun
+
+The first time a frame of DOOM rendered out of an F Prime telemetry
+channel was, scientifically speaking, an enormous proof that F Prime
+is the right shape of framework for hard-real-time embedded software.
+Pacing the rate group at 33 Hz, packing the frame buffer into 80
+`FrameChunk` samples a frame, holding ~8 MB/s of sustained downlink
+through the CCSDS framer, and round-tripping keystrokes from a
+browser through the command dispatcher to the engine — none of it
+needed any framework changes. F Prime just *did* it.
+
+It was also, scientifically speaking, an enormous amount of fun.
+
+**If it runs F Prime, it runs DOOM.**

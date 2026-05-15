@@ -51,7 +51,12 @@ DoomEngine::DoomEngine(const char* compName)
       m_keyQueueTail(0),
       m_keyQueueCount(0),
       m_overflowReported(false),
-      m_keysDropped(0) {
+      m_keysDropped(0),
+      m_inputEventsThisWindow(0),
+      m_inputBytesThisWindow(0),
+      m_schedTicks(0),
+      m_framesThisWindow(0),
+      m_frameBytesThisWindow(0) {
     FW_ASSERT(s_instance == nullptr);
     s_instance = this;
 
@@ -103,6 +108,43 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     this->tlmWrite_KeyQueueDepth(depth);
     this->tlmWrite_KeyEventsDropped(dropped);
     this->tlmWrite_FramesDropped(0U);  // No frame drops in pull model.
+
+    // Emit derived rate telemetry once per RATE_WINDOW_TICKS. With the
+    // deployment's 33 Hz rate group this is once per second.
+    m_schedTicks++;
+    constexpr U32 RATE_WINDOW_TICKS = 33U;
+    if (m_schedTicks >= RATE_WINDOW_TICKS) {
+        const F32 windowSec = static_cast<F32>(m_schedTicks) / 33.0f;
+        const F32 frameRate = static_cast<F32>(m_framesThisWindow) / windowSec;
+        const U32 frameDataRate = (windowSec > 0.0f)
+            ? static_cast<U32>(static_cast<F32>(m_frameBytesThisWindow) / windowSec)
+            : 0U;
+        // Snapshot input counters under the same mutex used to update
+        // them; reset them inside the lock so the next window starts
+        // clean and we don't lose events that arrive between unlock
+        // and reset.
+        m_keyMutex.lock();
+        const U32 inputEvents = m_inputEventsThisWindow;
+        const U32 inputBytes = m_inputBytesThisWindow;
+        m_inputEventsThisWindow = 0U;
+        m_inputBytesThisWindow = 0U;
+        m_keyMutex.unLock();
+        const F32 inputRate = static_cast<F32>(inputEvents) / windowSec;
+        const U32 inputDataRate = (windowSec > 0.0f)
+            ? static_cast<U32>(static_cast<F32>(inputBytes) / windowSec)
+            : 0U;
+
+        this->tlmWrite_FrameRateHz(frameRate);
+        this->tlmWrite_FrameDataRateBps(frameDataRate);
+        this->tlmWrite_InputCommandRateHz(inputRate);
+        this->tlmWrite_InputDataRateBps(inputDataRate);
+        this->log_ACTIVITY_LO_RateWindow(frameRate, frameDataRate,
+                                         inputRate, inputDataRate);
+
+        m_schedTicks = 0U;
+        m_framesThisWindow = 0U;
+        m_frameBytesThisWindow = 0U;
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -210,6 +252,11 @@ bool DoomEngine::enqueueKey(bool pressed, U8 code) {
     bool ok = false;
     bool emitOverflow = false;
     m_keyMutex.lock();
+    // Every received event counts toward the input rate windows,
+    // regardless of whether the queue had room. 2 bytes per event
+    // (pressed flag byte + key code byte) - documented in Telemetry.fppi.
+    m_inputEventsThisWindow++;
+    m_inputBytesThisWindow += 2U;
     if (m_keyQueueCount < KEY_QUEUE_CAPACITY) {
         const U16 entry = static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
         m_keyQueue[m_keyQueueTail] = entry;
@@ -263,6 +310,7 @@ void DoomEngine::platformDrawFrame() {
     const U8* const src = reinterpret_cast<const U8*>(DG_ScreenBuffer);
 
     m_framesProduced++;
+    m_framesThisWindow++;
     this->capturePaletteIfChanged();
 
     Doom::FrameChunk chunk;
@@ -285,6 +333,12 @@ void DoomEngine::platformDrawFrame() {
         chunk.set_row(currentRow);
         chunk.set_rowCount(rowsThisChunk);
         this->tlmWrite_FrameOut(chunk);
+        // Account for the on-wire bytes of this chunk: pixel payload
+        // is fixed-size (FRAME_CHUNK_BYTES) so the serialized telemetry
+        // packet is approximately FRAME_CHUNK_BYTES + the small struct
+        // header (3 U16 + U32 = 10 bytes). Round to FRAME_CHUNK_BYTES + 16
+        // to cover serialization framing without overcounting.
+        m_frameBytesThisWindow += static_cast<U32>(Doom::FRAME_CHUNK_BYTES) + 16U;
         currentRow = static_cast<U16>(currentRow + rowsThisChunk);
         rowsRemaining = static_cast<U16>(rowsRemaining - rowsThisChunk);
     }
@@ -295,6 +349,7 @@ void DoomEngine::platformDrawFrame() {
         U8* const dest = pal.get_rgb();
         (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
         this->tlmWrite_PaletteOut(pal);
+        m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
         m_lastEmittedPaletteGeneration = m_paletteGeneration;
     }
 }

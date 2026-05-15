@@ -28,16 +28,16 @@ class DoomEngine final : public DoomEngineComponentBase {
     static constexpr FwSizeType KEY_QUEUE_CAPACITY = 64;
 
     //! Width of the DOOM frame in pixels.
-    static constexpr U16 FRAME_WIDTH = 320;
+    static constexpr U16 FRAME_WIDTH = 640;
 
     //! Height of the DOOM frame in scanlines.
-    static constexpr U16 FRAME_HEIGHT = 200;
+    static constexpr U16 FRAME_HEIGHT = 400;
 
     //! Total bytes in one palette-indexed DOOM frame.
     static constexpr U32 FRAME_BYTES = static_cast<U32>(FRAME_WIDTH) * static_cast<U32>(FRAME_HEIGHT);
 
     //! Number of rows of a frame packed into one FrameChunk sample.
-    static constexpr U16 ROWS_PER_CHUNK = 10;
+    static constexpr U16 ROWS_PER_CHUNK = 5;
 
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
@@ -171,6 +171,25 @@ class DoomEngine final : public DoomEngineComponentBase {
     bool m_overflowReported;
     //! Total key events dropped due to overflow.
     U32 m_keysDropped;
+
+    //! Per-window counters for the input-rate telemetry. Incremented
+    //! under m_keyMutex by every enqueueKey() call (command and
+    //! parallel-port paths both go through enqueueKey).
+    U32 m_inputEventsThisWindow;
+    U32 m_inputBytesThisWindow;
+
+    // ------------------------------------------------------------------
+    // Rate-window state (rate-group thread only).
+    // Used to compute FrameRateHz / FrameDataRateBps and to publish the
+    // input rates harvested from m_inputEventsThisWindow etc.
+    // ------------------------------------------------------------------
+
+    //! Total scheduler ticks since engine start.
+    U32 m_schedTicks;
+    //! Frames produced inside the current rate window.
+    U32 m_framesThisWindow;
+    //! Bytes of FrameOut + PaletteOut emitted inside the current window.
+    U32 m_frameBytesThisWindow;
 
     // ------------------------------------------------------------------
     // Configuration

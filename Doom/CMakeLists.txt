@@ -109,13 +109,13 @@ target_include_directories(fprime_stress_doomgeneric
         "${DOOMGENERIC_DIR}"
 )
 # Upstream DOOM uses CMAP256 to render a palette-indexed 8-bit frame.
-# We force RESX/RESY to the canonical 320x200 so the screen buffer is
-# small and matches the FRAME_WIDTH/FRAME_HEIGHT constants in Doom.fpp.
+# We use doomgeneric's native 640x400 resolution to make this a useful
+# stress test - 256 kB / frame * 30 fps = 7.5 MB/s sustained downlink.
 target_compile_definitions(fprime_stress_doomgeneric
     PUBLIC
         CMAP256
-        DOOMGENERIC_RESX=320
-        DOOMGENERIC_RESY=200
+        DOOMGENERIC_RESX=640
+        DOOMGENERIC_RESY=400
         NORMALUNIX
         LINUX
         _DEFAULT_SOURCE

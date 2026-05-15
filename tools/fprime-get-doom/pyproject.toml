@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fprime-get-doom"
+version = "0.1.0"
+description = "Fetch the shareware DOOM1.WAD for use with the fprime-stress Doom component"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+keywords = ["fprime", "doom", "doomgeneric", "embedded", "nasa", "flight", "software"]
+authors = [
+  {name = "JPL F Prime team"},
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: Unix",
+    "Operating System :: POSIX",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+# No runtime dependencies on purpose. We only use stdlib (urllib +
+# hashlib + argparse) so the script is trivially portable to flight
+# software CI environments that may not have the full pip world.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/JPL-Devin/fprime-stress"
+Repository = "https://github.com/JPL-Devin/fprime-stress"
+
+####
+# Entry Points:
+#
+# Mirrors the fprime-tools / fprime-gds convention of registering a
+# console_script that points at a `main` callable so installing the
+# package gives the developer an `fprime-get-doom` binary on PATH.
+####
+[project.scripts]
+fprime-get-doom = "fprime_get_doom.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

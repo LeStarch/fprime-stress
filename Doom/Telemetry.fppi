@@ -26,3 +26,20 @@ telemetry KeyEventsDropped: U32 id 5
 @ Number of telemetry frame-chunk emissions skipped because the
 @ component scheduling fell behind the engine.
 telemetry FramesDropped: U32 id 6
+
+@ Engine output frame rate in frames per second, measured over a
+@ rolling one-second window updated on schedIn.
+telemetry FrameRateHz: F32 id 7
+
+@ Engine downlink data rate in bytes per second emitted via
+@ FrameOut + PaletteOut telemetry, measured over the same window.
+telemetry FrameDataRateBps: U32 id 8
+
+@ Inbound input data rate in bytes per second received through
+@ key-event commands and parallel input ports. Each key event is
+@ counted as one pressed flag (1 byte) + one code byte = 2 bytes.
+telemetry InputDataRateBps: U32 id 9
+
+@ Inbound input command rate in events per second received through
+@ key-event commands and parallel input ports.
+telemetry InputCommandRateHz: F32 id 10

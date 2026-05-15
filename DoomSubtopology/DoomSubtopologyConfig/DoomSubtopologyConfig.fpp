@@ -6,7 +6,13 @@ module DoomSubtopologyConfig {
     constant BASE_ID = 0x0D000000
 
     module QueueSizes {
-        constant doomEngine = 32
+        @ DoomEngine queue depth. Sized to absorb a burst of ~3 seconds
+        @ of scheduled ticks plus any concurrent key-input commands /
+        @ parallel-port pushes without dropping. With schedIn declared
+        @ as `async drop`, overflow is handled gracefully via the drop
+        @ policy rather than blocking the rate group, but we still want
+        @ a generous reservoir so steady-state never trips it.
+        constant doomEngine = 128
     }
 
     module StackSizes {

@@ -3,27 +3,30 @@ module Doom {
   # ----------------------------------------------------------------------
   # Frame dimensions
   #
-  # The wrapped DOOM engine runs at a fixed 320 x 200 palette-indexed
+  # The wrapped DOOM engine runs at a fixed 640 x 400 palette-indexed
   # resolution. Frames are streamed down as a sequence of FrameChunk
   # telemetry samples, each carrying a contiguous run of complete rows.
+  # At the configured ~30 Hz this is ~7.5 MB/s of sustained downlink
+  # telemetry - a deliberately punishing stress workload.
   # ----------------------------------------------------------------------
 
   @ Width of the DOOM frame in pixels.
-  constant FRAME_WIDTH = 320
+  constant FRAME_WIDTH = 640
 
   @ Height of the DOOM frame in scanlines.
-  constant FRAME_HEIGHT = 200
+  constant FRAME_HEIGHT = 400
 
   @ Number of rows packed into a single FrameChunk telemetry sample.
   @ FRAME_WIDTH * ROWS_PER_CHUNK + FrameChunk header must fit inside
-  @ FW_COM_BUFFER_MAX_SIZE (which is overridden to 4096 in this project).
-  constant ROWS_PER_CHUNK = 10
+  @ FW_COM_BUFFER_MAX_SIZE (4096 in this project). 5 * 640 = 3200 B.
+  constant ROWS_PER_CHUNK = 5
 
   @ Number of palette-indexed pixel bytes per FrameChunk.
   constant FRAME_CHUNK_BYTES = 3200
 
   @ Number of FrameChunk samples emitted to downlink one complete frame.
-  constant CHUNKS_PER_FRAME = 20
+  @ FRAME_HEIGHT (400) / ROWS_PER_CHUNK (5) = 80.
+  constant CHUNKS_PER_FRAME = 80
 
   @ Number of palette bytes (256 entries * 3 bytes per RGB triple).
   constant PALETTE_BYTES = 768
@@ -38,7 +41,7 @@ module Doom {
   struct FrameChunk {
     @ Monotonically increasing frame counter set by the component.
     frame: U32
-    @ Index of the first scanline contained in this chunk (0..199).
+    @ Index of the first scanline contained in this chunk (0..FRAME_HEIGHT-1).
     row: U16
     @ Number of scanlines packed in this chunk.
     rowCount: U16
@@ -146,7 +149,7 @@ module Doom {
     # ------------------------------------------------------------------
 
     @ Periodic scheduled call driving one doomgeneric_Tick per pulse.
-    sync input port schedIn: Svc.Sched
+    async input port schedIn: Svc.Sched drop
 
     # ------------------------------------------------------------------
     # Parallel input ports
