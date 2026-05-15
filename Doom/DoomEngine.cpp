@@ -109,11 +109,10 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 // Commands
 // ----------------------------------------------------------------------
 
-void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
+bool DoomEngine::forceStart() {
     if (m_engineRunning) {
         this->log_WARNING_LO_AlreadyRunning();
-        this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::EXECUTION_ERROR);
-        return;
+        return false;
     }
     this->tlmWrite_State(EngineState::STARTING);
 
@@ -133,7 +132,13 @@ void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     m_engineRunning = true;
     this->log_ACTIVITY_HI_EngineStarted();
     this->tlmWrite_State(EngineState::RUNNING);
-    this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
+    return true;
+}
+
+void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
+    const bool ok = this->forceStart();
+    this->cmdResponse_out(opCode, cmdSeq,
+                          ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }
 
 void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {

@@ -82,6 +82,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! so the title is intentionally ignored.
     void platformSetTitle(const char* title);
 
+    //! Programmatic engine bring-up. Identical to the Start command
+    //! except no cmdResponse is emitted. Intended for the autoStart
+    //! path in Main.cpp where the binary is launched headless without
+    //! a GDS to dispatch the Start command. Returns true on success.
+    bool forceStart();
+
   private:
     // ------------------------------------------------------------------
     // Handler implementations

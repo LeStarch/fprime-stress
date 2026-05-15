@@ -148,14 +148,14 @@ register_fprime_module()
 # Unit tests live under test/ut/ and are registered when the test
 # subdirectory exists. Keep this guarded so a fresh check-out without
 # tests still builds the production target.
-if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTester.cpp")
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp")
     set(UT_SOURCE_FILES
         "${CMAKE_CURRENT_LIST_DIR}/Doom.fpp"
-        "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTester.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTestMain.cpp"
     )
     set(UT_HEADER_FILES
-        "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTester.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.hpp"
     )
     set(UT_AUTO_HELPERS ON)
     register_fprime_ut()

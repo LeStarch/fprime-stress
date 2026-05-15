@@ -25,6 +25,9 @@ DoomSubtopology/                - reusable subtopology wrapper
   DoomSubtopologyConfig/
   SubtopologyTopologyDefs.hpp
   PingEntries.hpp
+gds-plugin/                     - JS-only fprime-gds addon
+  doom-display/                 - Vue component, dashboard
+  install.sh                    - one-shot installer
 THIRDPARTY/                     - upstream license attribution
 LICENSE                         - root license (GPLv2; see below)
 ```
