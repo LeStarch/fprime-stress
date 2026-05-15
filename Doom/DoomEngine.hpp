@@ -198,9 +198,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Configured WAD path. Empty string means "let DOOM auto-search".
     char m_wadPath[WAD_PATH_MAX];
 
-    //! Argv storage for doomgeneric_Create. DOOM's parser keeps the
-    //! pointers, so the backing strings must outlive the engine.
+    //! Argv storage for doomgeneric_Create. DOOM's parser caches both
+    //! the pointer array (myargv) and the strings indefinitely, so
+    //! both must outlive the call.
     char m_argvStorage[8][WAD_PATH_MAX];
+    const char* m_argvPointers[8];
 
     //! Singleton pointer used by extern "C" DG_* glue.
     static DoomEngine* s_instance;

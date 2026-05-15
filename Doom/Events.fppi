@@ -28,18 +28,3 @@ event AlreadyRunning() \
   severity warning low \
   id 3 \
   format "Start ignored - engine already running"
-
-@ Periodic stress-test heartbeat emitted once per rate-measurement
-@ window (~1 s at the deployment's 33 Hz schedIn pacing). Carries
-@ the same rate quantities published as telemetry so a smoke-test
-@ run with no GDS attached can still witness the workload via the
-@ event log.
-event RateWindow(
-                  framesPerSec: F32,
-                  frameBytesPerSec: U32,
-                  inputEventsPerSec: F32,
-                  inputBytesPerSec: U32
-                ) \
-  severity activity low \
-  id 4 \
-  format "rates: {f} fps, {} B/s frames, {f} ev/s in, {} B/s in"

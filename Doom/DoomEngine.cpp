@@ -64,6 +64,7 @@ DoomEngine::DoomEngine(const char* compName)
     (void)::memset(m_keyQueue, 0, sizeof(m_keyQueue));
     (void)::memset(m_wadPath, 0, sizeof(m_wadPath));
     (void)::memset(m_argvStorage, 0, sizeof(m_argvStorage));
+    (void)::memset(m_argvPointers, 0, sizeof(m_argvPointers));
 }
 
 DoomEngine::~DoomEngine() {
@@ -138,8 +139,6 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         this->tlmWrite_FrameDataRateBps(frameDataRate);
         this->tlmWrite_InputCommandRateHz(inputRate);
         this->tlmWrite_InputDataRateBps(inputDataRate);
-        this->log_ACTIVITY_LO_RateWindow(frameRate, frameDataRate,
-                                         inputRate, inputDataRate);
 
         m_schedTicks = 0U;
         m_framesThisWindow = 0U;
@@ -162,14 +161,12 @@ bool DoomEngine::forceStart() {
     const Os::RawTime::Status rt = m_engineStart.now();
     m_engineStartValid = (rt == Os::RawTime::Status::OP_OK);
 
-    // Build argv pointing into m_argvStorage which has component lifetime.
-    const char* argv[8] = {nullptr};
-    const int argc = this->buildEngineArgv(argv, 8);
-
-    // doomgeneric_Create initialises the engine and runs through to the
-    // first idle Tick before returning - so when this call returns, the
-    // engine is ready to be driven by the rate group.
-    doomgeneric_Create(argc, const_cast<char**>(argv));
+    // doomgeneric caches argv (as myargv) and walks it later from
+    // M_CheckParm, so both the pointer array and the backing strings
+    // must outlive the call. Both live in DoomEngine members.
+    const int argc = this->buildEngineArgv(m_argvPointers,
+                                           static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
+    doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
 
     m_engineRunning = true;
     this->log_ACTIVITY_HI_EngineStarted();

@@ -149,7 +149,11 @@ module Doom {
     # ------------------------------------------------------------------
 
     @ Periodic scheduled call driving one doomgeneric_Tick per pulse.
-    async input port schedIn: Svc.Sched drop
+    @ Declared sync so a tick that overruns its rate-group budget
+    @ trips Svc.ActiveRateGroup's cycle-slip telemetry directly,
+    @ giving hard evidence of an over-budget engine instead of
+    @ silently dropping the late frame.
+    sync input port schedIn: Svc.Sched
 
     # ------------------------------------------------------------------
     # Parallel input ports

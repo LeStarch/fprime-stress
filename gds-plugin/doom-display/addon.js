@@ -3,7 +3,7 @@
  * buffer onto a Canvas and forwards keyboard input as F Prime commands.
  *
  * Subscribes to:
- *   - DoomEngine.FrameOut    (FrameChunk struct, 20 chunks per frame)
+ *   - DoomEngine.FrameOut    (FrameChunk struct, 80 chunks per frame)
  *   - DoomEngine.PaletteOut  (Palette struct, 768 RGB bytes)
  *
  * Sends:
@@ -18,9 +18,11 @@
 import {_datastore, _dictionaries} from "../../js/datastore.js";
 import {_loader} from "../../js/loader.js";
 
-const FRAME_WIDTH = 320;
-const FRAME_HEIGHT = 200;
-const CHUNKS_PER_FRAME = 20;
+// Resolution must match Doom/FpConstants in the library:
+// FRAME_WIDTH=640, FRAME_HEIGHT=400, ROWS_PER_CHUNK=5 => 80 chunks/frame.
+const FRAME_WIDTH = 640;
+const FRAME_HEIGHT = 400;
+const CHUNKS_PER_FRAME = 80;
 
 // Default 256-entry RGB palette used until the first PaletteOut packet
 // is observed. A grayscale ramp keeps the canvas readable on startup.
@@ -121,10 +123,6 @@ Vue.component("doom-display", {
             stopCmd: null,
             keyDownCmd: null,
             keyUpCmd: null,
-            // Last seen FrameOut.val and PaletteOut.val. _datastore stores
-            // the last value of each channel; we re-read on every tick.
-            lastFrameVal: null,
-            lastPaletteVal: null,
             _pixels: null,
             _palette: null,
             _intervalId: null,
@@ -132,20 +130,30 @@ Vue.component("doom-display", {
         };
     },
     mounted() {
-        // _pixels: full 320x200 backbuffer; _palette: 768-byte RGB.
+        // _pixels: full FRAME_WIDTH x FRAME_HEIGHT backbuffer; _palette: 768-byte RGB.
         this._pixels = new Uint8Array(FRAME_WIDTH * FRAME_HEIGHT);
         this._palette = new Uint8Array(DEFAULT_PALETTE);
         this.refreshDictionary();
 
-        // _datastore.channels is a Vue-reactive object; rather than
-        // attaching a watcher to each channel id, poll at 30 Hz which
-        // matches DOOM's frame rate and is cheap enough.
-        this._intervalId = setInterval(this.poll, 33);
+        // Register as a stream consumer so every chunk reaches us;
+        // _datastore.channels only retains the last value per id, which
+        // would drop 79 of every 80 chunks at native framerate.
+        const self = this;
+        this._consumer = {send: function (items) { self.onChannels(items); }};
+        _datastore.registerConsumer("channels", this._consumer);
+
+        // Retry dictionary lookup until the deployment dictionary has
+        // loaded - the channel ids are not known synchronously at mount.
+        this._intervalId = setInterval(this.poll, 250);
     },
     beforeDestroy() {
         if (this._intervalId != null) {
             clearInterval(this._intervalId);
             this._intervalId = null;
+        }
+        if (this._consumer != null) {
+            _datastore.deregisterConsumer("channels", this._consumer);
+            this._consumer = null;
         }
     },
     methods: {
@@ -158,46 +166,55 @@ Vue.component("doom-display", {
             this.keyUpCmd   = findCommand(".KeyUp");
         },
         poll() {
-            if (this.frameChannelId == null || this.paletteChannelId == null) {
+            // Only used to retry dictionary resolution at mount until
+            // the deployment dictionary has loaded.
+            if (this.frameChannelId == null || this.paletteChannelId == null ||
+                this.keyDownCmd == null || this.startCmd == null) {
                 this.refreshDictionary();
-                return;
             }
-            const frameCh = _datastore.channels[this.frameChannelId];
-            if (frameCh != null && frameCh.val != null && frameCh.val !== this.lastFrameVal) {
-                this.lastFrameVal = frameCh.val;
-                this.absorbChunk(frameCh.val);
+        },
+        onChannels(items) {
+            if (this.frameChannelId == null) {
+                this.refreshDictionary();
+                if (this.frameChannelId == null) { return; }
             }
-            const palCh = _datastore.channels[this.paletteChannelId];
-            if (palCh != null && palCh.val != null && palCh.val !== this.lastPaletteVal) {
-                this.lastPaletteVal = palCh.val;
-                this.absorbPalette(palCh.val);
+            let blitted = false;
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.id === this.frameChannelId && item.val != null) {
+                    blitted = this.absorbChunk(item.val) || blitted;
+                } else if (item.id === this.paletteChannelId && item.val != null) {
+                    this.absorbPalette(item.val);
+                }
+            }
+            if (blitted) {
+                this.blit();
             }
         },
         absorbChunk(val) {
-            // val is the deserialised FrameChunk struct - {width, frame,
-            // row, rowCount, pixels:[bytes...]}. The exact field shape
-            // depends on the GDS json serialisation; try both nested and
-            // flat layouts.
+            // val is the deserialised FrameChunk struct - {frame, row,
+            // rowCount, width, pixels:[bytes...]}.
             const chunk = val.value || val;
             const row      = Number(chunk.row);
             const rowCount = Number(chunk.rowCount);
             const frame    = Number(chunk.frame);
             const pixels   = chunk.pixels;
             if (!Array.isArray(pixels) && !(pixels instanceof Uint8Array)) {
-                return;
+                return false;
             }
             const bytesThisChunk = rowCount * FRAME_WIDTH;
             const offset = row * FRAME_WIDTH;
-            for (let i = 0; i < bytesThisChunk && i < pixels.length; i++) {
+            const limit = Math.min(bytesThisChunk, pixels.length);
+            for (let i = 0; i < limit; i++) {
                 this._pixels[offset + i] = pixels[i] & 0xff;
             }
             this.chunksReceived++;
-            // After the final chunk of a frame (row + rowCount == FRAME_HEIGHT)
-            // we have a complete frame - blit it.
+            // Last chunk of the frame triggers a blit.
             if ((row + rowCount) >= FRAME_HEIGHT) {
                 this.lastFrame = frame;
-                this.blit();
+                return true;
             }
+            return false;
         },
         absorbPalette(val) {
             const pal = val.value || val;
@@ -218,8 +235,8 @@ Vue.component("doom-display", {
             if (ctx == null) {
                 return;
             }
-            // Build an ImageData at native 320x200, then use the canvas's
-            // 2x css scaling for the visible size.
+            // Build an ImageData at native FRAME_WIDTH x FRAME_HEIGHT,
+            // then use the canvas's 2x css scaling for the visible size.
             const img = ctx.createImageData(FRAME_WIDTH, FRAME_HEIGHT);
             const data = img.data;
             for (let i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; i++) {
@@ -230,10 +247,8 @@ Vue.component("doom-display", {
                 data[i * 4 + 2] = this._palette[palBase + 2];
                 data[i * 4 + 3] = 0xff;
             }
-            // Render at native resolution into an offscreen canvas, then
-            // scale up. createImageBitmap is async; for simplicity we
-            // putImageData directly and let the canvas's intrinsic size
-            // (320x200) be CSS-scaled to canvasWidth x canvasHeight.
+            // putImageData at native size and let the canvas's intrinsic
+            // size be CSS-scaled to canvasWidth x canvasHeight (2x).
             ctx.canvas.width  = FRAME_WIDTH;
             ctx.canvas.height = FRAME_HEIGHT;
             ctx.canvas.style.width  = (FRAME_WIDTH * 2) + "px";

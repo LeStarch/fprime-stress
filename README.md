@@ -93,6 +93,21 @@ chunks per frame, 33 frames per second, 2,640 chunks per second of
 sustained downlink — every one of those is a real F Prime message
 flowing through the real F Prime telemetry pipeline.
 
+A load-bearing observation from running this at full rate: `TlmChan`
+is a slot-store — it retains only the most recent value per channel
+id between Run ticks. With one channel id (`FrameOut`) carrying 80
+samples per cycle, only the bottom-of-frame chunk survives long
+enough to be packetised on the same-cycle Run port. The full
+emission rate is real, the framer sees it, the rate channels report
+it; the **per-channel sampling rate** that arrives on the ground is
+the Run rate. The browser plugin therefore renders the HUD strip
+at 33 Hz (the chunks that win the slot race each cycle) and
+accumulates the rest of the frame opportunistically. This is the
+stress test surfacing a real F Prime architectural property: the
+telemetry path is a SCADA-style point-store, not a stream. A real
+flight payload streaming frame-rate imagery would multiplex distinct
+channel ids or use `Svc.FileDownlink` for bulk transfer.
+
 ## Why this is an excellent stress test
 
 A stress test is only interesting if it exercises the system *the way
@@ -141,9 +156,10 @@ the system is meant to be exercised in flight*. This one does:
    | `InputDataRateBps` | U32 | Uplink B/s arriving as key events |
 
    These are graphable in the GDS Channels tab and trip nicely past
-   8 MB/s during gameplay. The same numbers are emitted as a
-   `RateWindow` event so a headless smoke-test run can witness the
-   workload without a GDS attached.
+   8 MB/s during gameplay. Cycle slips — when DOOM's tick exceeds the
+   rate-group budget — show up directly on `rateGroup1Comp`'s
+   `RgCycleSlips` channel and `RateGroupCycleSlip` event, so an
+   overload is observable in the telemetry stream itself.
 
 ## Running it
 
@@ -195,12 +211,13 @@ glue calls `malloc` after init. doomgeneric's own `Z_Init` arena is
 allocated exactly once from inside upstream code we deliberately do
 not modify; the F Prime glue itself is malloc-free in steady state.
 
-The DoomEngine is an **active component** but `schedIn` is declared
-`async drop`, so the rate-group thread enqueues a tick and returns
-immediately — DOOM runs on its own thread. The component queue is
-sized to absorb several seconds of pacing bursts; overflow drops a
-tick rather than blocking the rate group, which is the right
-behaviour when the workload is genuinely heavier than the schedule.
+The DoomEngine is an **active component** (so the parallel input
+ports / commands can be enqueued on its own thread) but `schedIn`
+is **sync**: each rate-group tick runs DOOM inline on the
+`rateGroup1Comp` thread. A tick that overruns its budget therefore
+trips `RateGroupCycleSlip` immediately rather than silently being
+absorbed by a queue — which is the discipline you want from a
+flight-software rate group.
 
 ## Licensing
 
