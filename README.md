@@ -45,17 +45,17 @@ and — now — F Prime.
 
 ```mermaid
 flowchart LR
-    subgraph LinuxTimer[LinuxTimer @ 100 Hz]
+    subgraph LinuxTimer[LinuxTimer @ ~70 Hz]
         T[CycleOut]
     end
     subgraph RGD[RateGroupDriver]
         D{divider}
     end
-    subgraph RG1[rateGroup1Comp @ 33 Hz]
+    subgraph RG1[rateGroup1Comp @ 35 Hz]
         S1[schedIn fan-out]
     end
     subgraph DoomSubtopology
-        DE[DoomEngine<br/>active]
+        DE[DoomEngine<br/>passive]
         BM[BufferManager]
     end
     subgraph CmdSeq[Svc.CmdSequencer]
@@ -72,7 +72,7 @@ flowchart LR
     end
 
     T --> D
-    D -- "/3 ≈ 33 Hz" --> S1
+    D -- "/2 = 35 Hz" --> S1
     S1 -- schedIn --> DE
     CS -- key cmds / parallel ports --> DE
     DE -- FrameOut chunks --> TC
@@ -89,9 +89,10 @@ frame**) is too large to ship as a single FPP telemetry sample
 under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (4 kB by default).
 We chunk it: each `Doom.FrameChunk` carries five complete scan lines
 (5 × 640 = 3,200 bytes of pixel data) plus a small header. Eighty
-chunks per frame, 33 frames per second, 2,640 chunks per second of
-sustained downlink — every one of those is a real F Prime message
-flowing through the real F Prime telemetry pipeline.
+chunks per frame, 35 frames per second (DOOM's native cadence),
+2,800 chunks per second of sustained downlink — every one of those
+is a real F Prime message flowing through the real F Prime telemetry
+pipeline.
 
 A load-bearing observation from running this at full rate: `TlmChan`
 is a slot-store — it retains only the most recent value per channel
@@ -101,7 +102,7 @@ enough to be packetised on the same-cycle Run port. The full
 emission rate is real, the framer sees it, the rate channels report
 it; the **per-channel sampling rate** that arrives on the ground is
 the Run rate. The browser plugin therefore renders the HUD strip
-at 33 Hz (the chunks that win the slot race each cycle) and
+at 35 Hz (the chunks that win the slot race each cycle) and
 accumulates the rest of the frame opportunistically. This is the
 stress test surfacing a real F Prime architectural property: the
 telemetry path is a SCADA-style point-store, not a stream. A real
@@ -114,16 +115,19 @@ A stress test is only interesting if it exercises the system *the way
 the system is meant to be exercised in flight*. This one does:
 
 1. **Periodic, hard-real-time scheduling**. The deployment's
-   `LinuxTimer` produces a 100 Hz base cycle; `RateGroupDriver`
-   divides that into a 33 Hz / 10 Hz / 1 Hz triple. DOOM lives on
-   the 33 Hz group. If the rate group can't service its cycle on
-   time, we get `RateGroupCycleSlip` warnings — exactly the
-   telemetry a mission operator would inspect when the spacecraft
-   is overloaded.
+   `LinuxTimer` produces a ~70 Hz base cycle; `RateGroupDriver`
+   divides that into a 35 Hz / 10 Hz / 1 Hz triple. DOOM lives on
+   the 35 Hz group, matching its native gameplay cadence exactly.
+   `DoomEngine.schedIn` is **sync** and the component is **passive**:
+   the rate-group thread runs `doomgeneric_Tick` directly and the
+   component owns no thread of its own. If a tick can't finish in
+   its 28.6 ms budget, `RateGroupCycleSlip` fires on the same tick
+   that overruns — exactly the telemetry a mission operator would
+   inspect when the spacecraft is overloaded.
 
 2. **Sustained bulk downlink**. Each rate-group tick produces 80
    serialized FPP messages of ~3.2 kB plus a palette and four rate
-   channels. That is **~8.5 MB/s** flowing through `TlmChan` →
+   channels. That is **~9 MB/s** flowing through `TlmChan` →
    `ComCcsds` → `Drv.TcpClient`. The CCSDS framer's
    `TmFrameFixedSize` is dimensioned to swallow it. Saturating the
    downlink under load is the whole point.
@@ -238,7 +242,7 @@ pin used to verify mirror downloads.
 The first time a frame of DOOM rendered out of an F Prime telemetry
 channel was, scientifically speaking, an enormous proof that F Prime
 is the right shape of framework for hard-real-time embedded software.
-Pacing the rate group at 33 Hz, packing the frame buffer into 80
+Pacing the rate group at 35 Hz, packing the frame buffer into 80
 `FrameChunk` samples a frame, holding ~8 MB/s of sustained downlink
 through the CCSDS framer, and round-tripping keystrokes from a
 browser through the command dispatcher to the engine — none of it

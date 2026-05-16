@@ -5,20 +5,6 @@ module DoomSubtopologyConfig {
     @ the slot reads as "DOOM" in hex.
     constant BASE_ID = 0x0D000000
 
-    module QueueSizes {
-        @ DoomEngine queue depth. schedIn is sync so the queue only
-        @ carries async command messages; 32 is ample headroom.
-        constant doomEngine = 32
-    }
-
-    module StackSizes {
-        constant doomEngine = 64 * 1024
-    }
-
-    module Priorities {
-        constant doomEngine = 30
-    }
-
     @ BufferManager parameters. The Doom subtopology hosts its own
     @ BufferManager so that any unpredictable dynamic allocation that
     @ may emerge (e.g. captured input traces, telemetry packet copies)

@@ -45,17 +45,12 @@ FwSizeType DoomEngineTester::drainKeys(bool* pressedOut, U8* codeOut, FwSizeType
 void DoomEngineTester::testCommandsEnqueueKeys() {
     const U32 cmdSeq = 1;
 
+    // The component is passive, so sync command handlers run
+    // immediately on sendCmd_*; there is no queue to drain.
     this->sendCmd_KeyTap(TEST_INSTANCE_ID, cmdSeq, Doom::DoomKey::FIRE);
-    this->dispatchOne(this->component);
-
     this->sendCmd_KeyDown(TEST_INSTANCE_ID, cmdSeq + 1, Doom::DoomKey::UP);
-    this->dispatchOne(this->component);
-
     this->sendCmd_KeyUp(TEST_INSTANCE_ID, cmdSeq + 2, Doom::DoomKey::UP);
-    this->dispatchOne(this->component);
-
     this->sendCmd_RawKey(TEST_INSTANCE_ID, cmdSeq + 3, true, static_cast<U8>(0x42));
-    this->dispatchOne(this->component);
 
     // KeyTap -> (true, FIRE), (false, FIRE)
     // KeyDown -> (true, UP)
@@ -135,7 +130,6 @@ void DoomEngineTester::testOverflowEmitsEvent() {
 
 void DoomEngineTester::testStopCommandResponds() {
     this->sendCmd_Stop(TEST_INSTANCE_ID, 0);
-    this->dispatchOne(this->component);
     ASSERT_CMD_RESPONSE_SIZE(1);
 }
 

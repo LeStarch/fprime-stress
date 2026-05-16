@@ -111,11 +111,12 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     this->tlmWrite_FramesDropped(0U);  // No frame drops in pull model.
 
     // Emit derived rate telemetry once per RATE_WINDOW_TICKS. With the
-    // deployment's 33 Hz rate group this is once per second.
+    // deployment's 35 Hz rate group (matching DOOM's native cadence)
+    // this is once per second.
     m_schedTicks++;
-    constexpr U32 RATE_WINDOW_TICKS = 33U;
+    constexpr U32 RATE_WINDOW_TICKS = 35U;
     if (m_schedTicks >= RATE_WINDOW_TICKS) {
-        const F32 windowSec = static_cast<F32>(m_schedTicks) / 33.0f;
+        const F32 windowSec = static_cast<F32>(m_schedTicks) / 35.0f;
         const F32 frameRate = static_cast<F32>(m_framesThisWindow) / windowSec;
         const U32 frameDataRate = (windowSec > 0.0f)
             ? static_cast<U32>(static_cast<F32>(m_frameBytesThisWindow) / windowSec)
@@ -310,34 +311,33 @@ void DoomEngine::platformDrawFrame() {
     m_framesThisWindow++;
     this->capturePaletteIfChanged();
 
+    // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
+    // so every chunk is the same fixed size and no partial-chunk handling
+    // is needed. Enforce that invariant at compile time so the loop body
+    // can copy a fixed FRAME_CHUNK_BYTES per iteration.
+    static_assert((FRAME_HEIGHT % ROWS_PER_CHUNK) == 0U,
+                  "FRAME_HEIGHT must be an integer multiple of ROWS_PER_CHUNK");
+    static_assert(static_cast<U32>(ROWS_PER_CHUNK) * static_cast<U32>(FRAME_WIDTH) ==
+                      static_cast<U32>(Doom::FRAME_CHUNK_BYTES),
+                  "ROWS_PER_CHUNK * FRAME_WIDTH must equal FRAME_CHUNK_BYTES");
+
     Doom::FrameChunk chunk;
     chunk.set_width(FRAME_WIDTH);
+    chunk.set_rowCount(ROWS_PER_CHUNK);
     chunk.set_frame(m_framesProduced);
     U8* const chunkPixels = chunk.get_pixels();
-    const U16 totalRows = FRAME_HEIGHT;
-    U16 rowsRemaining = totalRows;
-    U16 currentRow = 0;
-    while (rowsRemaining > 0U) {
-        const U16 rowsThisChunk =
-            (rowsRemaining >= ROWS_PER_CHUNK) ? ROWS_PER_CHUNK : rowsRemaining;
-        const U32 bytesThisChunk = static_cast<U32>(rowsThisChunk) * static_cast<U32>(FRAME_WIDTH);
+
+    for (U16 currentRow = 0; currentRow < FRAME_HEIGHT;
+         currentRow = static_cast<U16>(currentRow + ROWS_PER_CHUNK)) {
         const U32 offset = static_cast<U32>(currentRow) * static_cast<U32>(FRAME_WIDTH);
-        (void)::memcpy(chunkPixels, &src[offset], bytesThisChunk);
-        if (bytesThisChunk < static_cast<U32>(Doom::FRAME_CHUNK_BYTES)) {
-            (void)::memset(&chunkPixels[bytesThisChunk], 0,
-                           static_cast<U32>(Doom::FRAME_CHUNK_BYTES) - bytesThisChunk);
-        }
+        (void)::memcpy(chunkPixels, &src[offset], Doom::FRAME_CHUNK_BYTES);
         chunk.set_row(currentRow);
-        chunk.set_rowCount(rowsThisChunk);
         this->tlmWrite_FrameOut(chunk);
-        // Account for the on-wire bytes of this chunk: pixel payload
-        // is fixed-size (FRAME_CHUNK_BYTES) so the serialized telemetry
-        // packet is approximately FRAME_CHUNK_BYTES + the small struct
-        // header (3 U16 + U32 = 10 bytes). Round to FRAME_CHUNK_BYTES + 16
-        // to cover serialization framing without overcounting.
+        // Account for on-wire bytes of this chunk: the fixed-size pixel
+        // payload plus the small struct header (frame U32 + row/rowCount/
+        // width U16 = 10 B). Round to FRAME_CHUNK_BYTES + 16 to cover
+        // serialization framing without overcounting.
         m_frameBytesThisWindow += static_cast<U32>(Doom::FRAME_CHUNK_BYTES) + 16U;
-        currentRow = static_cast<U16>(currentRow + rowsThisChunk);
-        rowsRemaining = static_cast<U16>(rowsRemaining - rowsThisChunk);
     }
 
     if (m_paletteGeneration != m_lastEmittedPaletteGeneration) {

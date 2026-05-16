@@ -6,8 +6,9 @@ module Doom {
   # The wrapped DOOM engine runs at a fixed 640 x 400 palette-indexed
   # resolution. Frames are streamed down as a sequence of FrameChunk
   # telemetry samples, each carrying a contiguous run of complete rows.
-  # At the configured ~30 Hz this is ~7.5 MB/s of sustained downlink
-  # telemetry - a deliberately punishing stress workload.
+  # At DOOM's native 35 Hz this is 80 chunks * 3200 B * 35 Hz ~ 8.6 MB/s
+  # of sustained downlink telemetry - a deliberately punishing stress
+  # workload.
   # ----------------------------------------------------------------------
 
   @ Width of the DOOM frame in pixels.
@@ -142,7 +143,12 @@ module Doom {
   @ runs exactly one doomgeneric_Tick (one DOOM frame of game logic)
   @ on the rate-group thread. doomgeneric_Create is invoked
   @ synchronously by the Start command handler.
-  active component DoomEngine {
+  @
+  @ Declared passive: schedIn is sync (runs on the rate-group thread)
+  @ and all command handlers are sync (run on the cmdDispatch thread),
+  @ so the component owns no thread of its own. Cross-thread state is
+  @ limited to the key queue, which is mutex-guarded.
+  passive component DoomEngine {
 
     # ------------------------------------------------------------------
     # Scheduled ports

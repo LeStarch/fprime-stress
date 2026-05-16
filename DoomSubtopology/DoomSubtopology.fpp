@@ -20,11 +20,10 @@ module DoomSubtopology {
     # Component instances
     # ------------------------------------------------------------------
 
-    @ Singleton Doom engine wrapper.
-    instance doom: Doom.DoomEngine base id DoomSubtopologyConfig.BASE_ID + 0x00000 \
-        queue size DoomSubtopologyConfig.QueueSizes.doomEngine \
-        stack size DoomSubtopologyConfig.StackSizes.doomEngine \
-        priority DoomSubtopologyConfig.Priorities.doomEngine
+    @ Singleton Doom engine wrapper. Passive: the component owns no
+    @ thread; schedIn runs on the rate-group thread and command
+    @ handlers run on the command-dispatch thread.
+    instance doom: Doom.DoomEngine base id DoomSubtopologyConfig.BASE_ID + 0x00000
 
     @ Dedicated BufferManager for the Doom subtopology. Reserved for
     @ truly unpredictable dynamic allocations originating from within

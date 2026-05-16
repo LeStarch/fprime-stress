@@ -20,7 +20,6 @@ namespace Doom {
 class DoomEngineTester final : public DoomEngineGTestBase {
   public:
     static constexpr FwIndexType TEST_INSTANCE_ID = 0;
-    static constexpr FwEnumStoreType TEST_INSTANCE_QUEUE_DEPTH = 16;
     static constexpr FwSizeType MAX_HISTORY_SIZE = 256;
 
     DoomEngineTester();
