@@ -36,6 +36,51 @@ namespace Doom {
 
 DoomEngine* DoomEngine::s_instance = nullptr;
 
+// Definition of the dispatch table declared in DoomEngine.hpp. See the
+// header comment there for why this lives at class scope.
+const DoomEngine::FrameOutWriter DoomEngine::kFrameOutWriters[Doom::CHUNKS_PER_FRAME] = {
+    &DoomEngine::tlmWrite_FrameOut00, &DoomEngine::tlmWrite_FrameOut01,
+    &DoomEngine::tlmWrite_FrameOut02, &DoomEngine::tlmWrite_FrameOut03,
+    &DoomEngine::tlmWrite_FrameOut04, &DoomEngine::tlmWrite_FrameOut05,
+    &DoomEngine::tlmWrite_FrameOut06, &DoomEngine::tlmWrite_FrameOut07,
+    &DoomEngine::tlmWrite_FrameOut08, &DoomEngine::tlmWrite_FrameOut09,
+    &DoomEngine::tlmWrite_FrameOut10, &DoomEngine::tlmWrite_FrameOut11,
+    &DoomEngine::tlmWrite_FrameOut12, &DoomEngine::tlmWrite_FrameOut13,
+    &DoomEngine::tlmWrite_FrameOut14, &DoomEngine::tlmWrite_FrameOut15,
+    &DoomEngine::tlmWrite_FrameOut16, &DoomEngine::tlmWrite_FrameOut17,
+    &DoomEngine::tlmWrite_FrameOut18, &DoomEngine::tlmWrite_FrameOut19,
+    &DoomEngine::tlmWrite_FrameOut20, &DoomEngine::tlmWrite_FrameOut21,
+    &DoomEngine::tlmWrite_FrameOut22, &DoomEngine::tlmWrite_FrameOut23,
+    &DoomEngine::tlmWrite_FrameOut24, &DoomEngine::tlmWrite_FrameOut25,
+    &DoomEngine::tlmWrite_FrameOut26, &DoomEngine::tlmWrite_FrameOut27,
+    &DoomEngine::tlmWrite_FrameOut28, &DoomEngine::tlmWrite_FrameOut29,
+    &DoomEngine::tlmWrite_FrameOut30, &DoomEngine::tlmWrite_FrameOut31,
+    &DoomEngine::tlmWrite_FrameOut32, &DoomEngine::tlmWrite_FrameOut33,
+    &DoomEngine::tlmWrite_FrameOut34, &DoomEngine::tlmWrite_FrameOut35,
+    &DoomEngine::tlmWrite_FrameOut36, &DoomEngine::tlmWrite_FrameOut37,
+    &DoomEngine::tlmWrite_FrameOut38, &DoomEngine::tlmWrite_FrameOut39,
+    &DoomEngine::tlmWrite_FrameOut40, &DoomEngine::tlmWrite_FrameOut41,
+    &DoomEngine::tlmWrite_FrameOut42, &DoomEngine::tlmWrite_FrameOut43,
+    &DoomEngine::tlmWrite_FrameOut44, &DoomEngine::tlmWrite_FrameOut45,
+    &DoomEngine::tlmWrite_FrameOut46, &DoomEngine::tlmWrite_FrameOut47,
+    &DoomEngine::tlmWrite_FrameOut48, &DoomEngine::tlmWrite_FrameOut49,
+    &DoomEngine::tlmWrite_FrameOut50, &DoomEngine::tlmWrite_FrameOut51,
+    &DoomEngine::tlmWrite_FrameOut52, &DoomEngine::tlmWrite_FrameOut53,
+    &DoomEngine::tlmWrite_FrameOut54, &DoomEngine::tlmWrite_FrameOut55,
+    &DoomEngine::tlmWrite_FrameOut56, &DoomEngine::tlmWrite_FrameOut57,
+    &DoomEngine::tlmWrite_FrameOut58, &DoomEngine::tlmWrite_FrameOut59,
+    &DoomEngine::tlmWrite_FrameOut60, &DoomEngine::tlmWrite_FrameOut61,
+    &DoomEngine::tlmWrite_FrameOut62, &DoomEngine::tlmWrite_FrameOut63,
+    &DoomEngine::tlmWrite_FrameOut64, &DoomEngine::tlmWrite_FrameOut65,
+    &DoomEngine::tlmWrite_FrameOut66, &DoomEngine::tlmWrite_FrameOut67,
+    &DoomEngine::tlmWrite_FrameOut68, &DoomEngine::tlmWrite_FrameOut69,
+    &DoomEngine::tlmWrite_FrameOut70, &DoomEngine::tlmWrite_FrameOut71,
+    &DoomEngine::tlmWrite_FrameOut72, &DoomEngine::tlmWrite_FrameOut73,
+    &DoomEngine::tlmWrite_FrameOut74, &DoomEngine::tlmWrite_FrameOut75,
+    &DoomEngine::tlmWrite_FrameOut76, &DoomEngine::tlmWrite_FrameOut77,
+    &DoomEngine::tlmWrite_FrameOut78, &DoomEngine::tlmWrite_FrameOut79
+};
+
 // ----------------------------------------------------------------------
 // Construction / destruction
 // ----------------------------------------------------------------------
@@ -327,12 +372,16 @@ void DoomEngine::platformDrawFrame() {
     chunk.set_frame(m_framesProduced);
     U8* const chunkPixels = chunk.get_pixels();
 
-    for (U16 currentRow = 0; currentRow < FRAME_HEIGHT;
-         currentRow = static_cast<U16>(currentRow + ROWS_PER_CHUNK)) {
+    // Each iteration writes its chunk to a distinct telemetry channel id
+    // (FrameOut00 .. FrameOut79) via the dispatch table. The N->channel-id
+    // multiplex is what defeats TlmChan's slot-store collapse - see the
+    // header comment on kFrameOutWriters above.
+    for (U16 chunkIdx = 0; chunkIdx < Doom::CHUNKS_PER_FRAME; chunkIdx++) {
+        const U16 currentRow = static_cast<U16>(chunkIdx * ROWS_PER_CHUNK);
         const U32 offset = static_cast<U32>(currentRow) * static_cast<U32>(FRAME_WIDTH);
         (void)::memcpy(chunkPixels, &src[offset], Doom::FRAME_CHUNK_BYTES);
         chunk.set_row(currentRow);
-        this->tlmWrite_FrameOut(chunk);
+        (this->*kFrameOutWriters[chunkIdx])(chunk, Fw::Time());
         // Account for on-wire bytes of this chunk: the fixed-size pixel
         // payload plus the small struct header (frame U32 + row/rowCount/
         // width U16 = 10 B). Round to FRAME_CHUNK_BYTES + 16 to cover

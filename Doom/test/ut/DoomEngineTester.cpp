@@ -135,7 +135,10 @@ void DoomEngineTester::testStopCommandResponds() {
 
 void DoomEngineTester::testSchedInWhenEngineOff() {
     this->invoke_to_schedIn(0, 0);
-    ASSERT_TLM_FrameOut_SIZE(0);
+    // No FrameOutNN channel should be emitted when the engine is off.
+    // FrameOut is multiplexed across 80 channel ids; FrameOut00 is the
+    // representative cell.
+    ASSERT_TLM_FrameOut00_SIZE(0);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_EVENTS_EngineStopped_SIZE(0);
 }

@@ -96,18 +96,26 @@ pipeline.
 
 A load-bearing observation from running this at full rate: `TlmChan`
 is a slot-store — it retains only the most recent value per channel
-id between Run ticks. With one channel id (`FrameOut`) carrying 80
-samples per cycle, only the bottom-of-frame chunk survives long
-enough to be packetised on the same-cycle Run port. The full
-emission rate is real, the framer sees it, the rate channels report
-it; the **per-channel sampling rate** that arrives on the ground is
-the Run rate. The browser plugin therefore renders the HUD strip
-at 35 Hz (the chunks that win the slot race each cycle) and
-accumulates the rest of the frame opportunistically. This is the
-stress test surfacing a real F Prime architectural property: the
-telemetry path is a SCADA-style point-store, not a stream. A real
-flight payload streaming frame-rate imagery would multiplex distinct
-channel ids or use `Svc.FileDownlink` for bulk transfer.
+id between Run ticks. The original implementation wrote 80 chunks
+per cycle to a single channel id (`FrameOut`); only the
+bottom-of-frame chunk survived to ground each Run tick and the
+browser canvas accordingly only painted the HUD strip. The frame
+data was real, but the per-channel sampling rate was throttled to
+the Run rate by the slot store collapsing 79 of every 80 writes.
+
+This deployment therefore multiplexes frame data across 80 distinct
+telemetry channel ids (`FrameOut00` … `FrameOut79`), one per
+scanline group of `ROWS_PER_CHUNK` rows. Each chunk position has
+its own slot, so a single cycle produces 80 surviving samples
+instead of one. A function-pointer dispatch table in
+`DoomEngine::platformDrawFrame` maps the chunk index to the
+matching `tlmWrite_FrameOutNN` member function so the per-cycle
+loop stays a tight `for` over the chunk count. The browser plugin
+subscribes to all 80 channel ids and reassembles the full 640×400
+frame as cycles arrive — the multiplex is the same pattern a real
+flight payload streaming frame-rate imagery would use, and is the
+proper alternative to `Svc.FileDownlink` for bulk transfer when
+ground display latency matters.
 
 ## Why this is an excellent stress test
 

@@ -3,8 +3,10 @@
  * buffer onto a Canvas and forwards keyboard input as F Prime commands.
  *
  * Subscribes to:
- *   - DoomEngine.FrameOut    (FrameChunk struct, 80 chunks per frame)
- *   - DoomEngine.PaletteOut  (Palette struct, 768 RGB bytes)
+ *   - DoomEngine.FrameOut00..FrameOut79 (80 distinct FrameChunk channels,
+ *     one per scanline group of 5 rows; this multiplex is what defeats
+ *     TlmChan's slot-store collapse - see the library README)
+ *   - DoomEngine.PaletteOut             (Palette struct, 768 RGB bytes)
  *
  * Sends:
  *   - DoomEngine.KeyDown / DoomEngine.KeyUp (DoomKey enum)
@@ -117,7 +119,10 @@ Vue.component("doom-display", {
             chunksReceived: 0,
             lastFrame: 0,
             lastKey: "(none)",
-            frameChannelId: null,
+            // Set of 80 channel ids (FrameOut00..FrameOut79) used as a
+            // lookup table for chunk dispatch. Indexed by chunk
+            // position, value is the channel id.
+            frameChannelIds: null,
             paletteChannelId: null,
             startCmd: null,
             stopCmd: null,
@@ -158,7 +163,19 @@ Vue.component("doom-display", {
     },
     methods: {
         refreshDictionary() {
-            this.frameChannelId   = findChannel(".FrameOut");
+            // Build an id->chunk-index map. Each FrameOutNN channel
+            // carries the chunk at scanline group NN.
+            const ids = {};
+            let resolved = 0;
+            for (let i = 0; i < CHUNKS_PER_FRAME; i++) {
+                const suffix = ".FrameOut" + (i < 10 ? "0" + i : "" + i);
+                const cid = findChannel(suffix);
+                if (cid != null) {
+                    ids[cid] = i;
+                    resolved++;
+                }
+            }
+            this.frameChannelIds = resolved === CHUNKS_PER_FRAME ? ids : null;
             this.paletteChannelId = findChannel(".PaletteOut");
             this.startCmd   = findCommand(".Start");
             this.stopCmd    = findCommand(".Stop");
@@ -166,24 +183,36 @@ Vue.component("doom-display", {
             this.keyUpCmd   = findCommand(".KeyUp");
         },
         poll() {
-            // Only used to retry dictionary resolution at mount until
-            // the deployment dictionary has loaded.
-            if (this.frameChannelId == null || this.paletteChannelId == null ||
+            // Retry dictionary resolution until the deployment dictionary
+            // has loaded. Once resolved, also pull the palette out of the
+            // GDS-side slot store on every tick so a colour palette emitted
+            // while we were still mounting (or buffered behind a comQueue
+            // overflow burst) still reaches the canvas.
+            if (this.frameChannelIds == null || this.paletteChannelId == null ||
                 this.keyDownCmd == null || this.startCmd == null) {
                 this.refreshDictionary();
             }
+            this.absorbPaletteFromSlotStore();
+        },
+        absorbPaletteFromSlotStore() {
+            if (this.paletteChannelId == null) { return; }
+            const slot = _datastore.channels && _datastore.channels[this.paletteChannelId];
+            if (slot != null && slot.val != null) {
+                this.absorbPalette(slot.val);
+            }
         },
         onChannels(items) {
-            if (this.frameChannelId == null) {
+            if (this.frameChannelIds == null) {
                 this.refreshDictionary();
-                if (this.frameChannelId == null) { return; }
+                if (this.frameChannelIds == null) { return; }
             }
             let blitted = false;
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
-                if (item.id === this.frameChannelId && item.val != null) {
+                if (item.val == null) { continue; }
+                if (this.frameChannelIds[item.id] !== undefined) {
                     blitted = this.absorbChunk(item.val) || blitted;
-                } else if (item.id === this.paletteChannelId && item.val != null) {
+                } else if (item.id === this.paletteChannelId) {
                     this.absorbPalette(item.val);
                 }
             }

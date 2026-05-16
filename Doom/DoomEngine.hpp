@@ -17,6 +17,7 @@
 #define Doom_DoomEngine_HPP
 
 #include "Doom/DoomEngineComponentAc.hpp"
+#include "Doom/FppConstantsAc.hpp"
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
 
@@ -129,6 +130,21 @@ class DoomEngine final : public DoomEngineComponentBase {
     int buildEngineArgv(const char** argv, int maxArgv);
 
   private:
+    // ------------------------------------------------------------------
+    // FrameOutNN dispatch table.
+    //
+    // Each FrameChunk position has its own telemetry channel id
+    // (FrameOut00 .. FrameOut79). The dispatch table maps the chunk
+    // index to the matching tlmWrite_FrameOutNN member-function pointer.
+    // Lives inside the class because the base-class tlmWrite_FrameOutNN
+    // methods are protected; only the derived class can take their
+    // address.
+    // ------------------------------------------------------------------
+
+    using FrameOutWriter = void (DoomEngineComponentBase::*)(
+        const Doom::FrameChunk&, Fw::Time) const;
+    static const FrameOutWriter kFrameOutWriters[Doom::CHUNKS_PER_FRAME];
+
     // ------------------------------------------------------------------
     // Engine-thread state (rate-group thread only).
     // ------------------------------------------------------------------
