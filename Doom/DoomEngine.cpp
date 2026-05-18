@@ -389,15 +389,23 @@ void DoomEngine::platformDrawFrame() {
         m_frameBytesThisWindow += static_cast<U32>(Doom::FRAME_CHUNK_BYTES) + 16U;
     }
 
-    if (m_paletteGeneration != m_lastEmittedPaletteGeneration) {
-        Doom::Palette pal;
-        pal.set_generation(m_paletteGeneration);
-        U8* const dest = pal.get_rgb();
-        (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
-        this->tlmWrite_PaletteOut(pal);
-        m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
-        m_lastEmittedPaletteGeneration = m_paletteGeneration;
-    }
+    // Palette is emitted on every frame, not just on change. The palette
+    // is only 768 B (256 RGB triples) versus 256 KB of FrameOut, so the
+    // bandwidth cost is negligible (~27 KB/s at 35 Hz). The benefit is
+    // that the ground stays in sync with the active palette no matter
+    // when it attached - a generation-gated emission was lost forever
+    // if the single change-tick arrived before the GDS session opened
+    // or while comQueue back-pressure was draining the FrameOut burst.
+    // Eventually-consistent palette delivery is what gives the canvas
+    // its colours; without it the addon's grayscale fallback ramp
+    // sticks around even though the frame data itself is correct.
+    Doom::Palette pal;
+    pal.set_generation(m_paletteGeneration);
+    U8* const dest = pal.get_rgb();
+    (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
+    this->tlmWrite_PaletteOut(pal);
+    m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
+    m_lastEmittedPaletteGeneration = m_paletteGeneration;
 }
 
 void DoomEngine::capturePaletteIfChanged() {

@@ -17,8 +17,18 @@
  * Then add `import "./doom-display/addon.js";` to the addons enabled.js
  * (or use the patch-addons.sh script in this directory).
  */
-import {_datastore, _dictionaries} from "../../js/datastore.js";
+import {_dictionaries} from "../../js/datastore.js";
 import {_loader} from "../../js/loader.js";
+import {SaferParser} from "../../js/json.js";
+
+// Native JSON.parse, saved before SaferParser overrode the global. The
+// stock SaferParser's regex tokenizer is O(N**2) on the input and
+// throws RangeError("Invalid array length") on the multi-MB channel
+// responses produced by 80 FrameOutNN telemetry channels at 35 Hz. The
+// addon polls its own session and decodes responses with the native
+// parser directly, since DOOM telemetry contains no NaN/Infinity/BigInt
+// values that SaferParser was added to handle.
+const nativeJsonParse = SaferParser.language_parse;
 
 // Resolution must match Doom/FpConstants in the library:
 // FRAME_WIDTH=640, FRAME_HEIGHT=400, ROWS_PER_CHUNK=5 => 80 chunks/frame.
@@ -132,6 +142,11 @@ Vue.component("doom-display", {
             _palette: null,
             _intervalId: null,
             _heldKeys: {},
+            // Own-session polling - independent of the broken SaferParser
+            // bulk pipeline. Each addon instance gets its own session key
+            // and its own retrieval cursor through fprime_gds' RamHistory.
+            _sessionKey: null,
+            _pollInFlight: false,
         };
     },
     mounted() {
@@ -140,25 +155,27 @@ Vue.component("doom-display", {
         this._palette = new Uint8Array(DEFAULT_PALETTE);
         this.refreshDictionary();
 
-        // Register as a stream consumer so every chunk reaches us;
-        // _datastore.channels only retains the last value per id, which
-        // would drop 79 of every 80 chunks at native framerate.
+        // Acquire a dedicated session up front so that the very first
+        // poll starts from a known cursor and we don't race the loader's
+        // session creation. The session endpoint is tiny so the broken
+        // SaferParser is not a hazard here.
         const self = this;
-        this._consumer = {send: function (items) { self.onChannels(items); }};
-        _datastore.registerConsumer("channels", this._consumer);
+        fetch("/session").then((r) => r.json()).then((data) => {
+            self._sessionKey = data.session;
+        }).catch((err) => {
+            console.warn("doom-display: failed to acquire session:", err);
+        });
 
-        // Retry dictionary lookup until the deployment dictionary has
-        // loaded - the channel ids are not known synchronously at mount.
-        this._intervalId = setInterval(this.poll, 250);
+        // Poll at 100 ms - small enough to keep each /channels response
+        // well below the size where native JSON.parse starts to feel it,
+        // fast enough that the frame counter stays close to the engine's
+        // 35 Hz emission rate.
+        this._intervalId = setInterval(this.poll, 100);
     },
     beforeDestroy() {
         if (this._intervalId != null) {
             clearInterval(this._intervalId);
             this._intervalId = null;
-        }
-        if (this._consumer != null) {
-            _datastore.deregisterConsumer("channels", this._consumer);
-            this._consumer = null;
         }
     },
     methods: {
@@ -184,22 +201,35 @@ Vue.component("doom-display", {
         },
         poll() {
             // Retry dictionary resolution until the deployment dictionary
-            // has loaded. Once resolved, also pull the palette out of the
-            // GDS-side slot store on every tick so a colour palette emitted
-            // while we were still mounting (or buffered behind a comQueue
-            // overflow burst) still reaches the canvas.
+            // has loaded; channel ids are not known synchronously at mount.
             if (this.frameChannelIds == null || this.paletteChannelId == null ||
                 this.keyDownCmd == null || this.startCmd == null) {
                 this.refreshDictionary();
             }
-            this.absorbPaletteFromSlotStore();
+            this.pullChannels();
         },
-        absorbPaletteFromSlotStore() {
-            if (this.paletteChannelId == null) { return; }
-            const slot = _datastore.channels && _datastore.channels[this.paletteChannelId];
-            if (slot != null && slot.val != null) {
-                this.absorbPalette(slot.val);
-            }
+        pullChannels() {
+            // Drain everything that has accumulated in the addon's private
+            // session since the last poll. Native JSON.parse here is the
+            // load-bearing detail - the broken SaferParser blows up on a
+            // single multi-MB channel response, which is exactly what 80
+            // FrameOutNN packets at 35 Hz produce.
+            if (this._sessionKey == null || this._pollInFlight) { return; }
+            this._pollInFlight = true;
+            const url = "/channels?session=" + encodeURIComponent(this._sessionKey)
+                + "&limit=8192";
+            const self = this;
+            fetch(url).then((r) => r.text()).then((text) => {
+                const data = nativeJsonParse(text);
+                const items = (data && data.history) || [];
+                if (items.length > 0) {
+                    self.onChannels(items);
+                }
+            }).catch((err) => {
+                console.warn("doom-display: channel poll failed:", err);
+            }).finally(() => {
+                self._pollInFlight = false;
+            });
         },
         onChannels(items) {
             if (this.frameChannelIds == null) {
