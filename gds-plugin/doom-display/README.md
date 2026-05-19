@@ -27,14 +27,18 @@ Run `../install.sh` (one level up from this directory). The script:
    `flask/static/addons/doom-display/`.
 2. Appends `import "./doom-display/addon.js";` to that package's
    `enabled.js` (idempotent).
-3. Flips `config.enableDashboards = true` in the package's
-   `flask/static/js/config.js` so the **Dashboard** tab actually
-   renders.
 
-After the script finishes, restart `fprime-gds`, open the **Dashboard**
-tab in your browser, click **Upload Dashboard File**, and select
-`../dashboard.xml` (next to the install script). The **DOOM** panel
-will appear.
+The **Dashboard** tab itself is enabled by the project-local
+`fprime-gds.yml` in the deployment root, which uses its `flask`
+section to override `JS_CONFIGURATION_FILE` to point at
+`../config.js` (next to this addon). That `config.js` sets
+`config.enableDashboards = true` without mutating the installed
+fprime-gds site-packages tree.
+
+After the script finishes, run `fprime-gds` from the deployment root,
+open the **Dashboard** tab in your browser, click **Upload Dashboard
+File**, and select `../dashboard.xml` (next to the install script).
+The **DOOM** panel will appear.
 
 ## Files
 
