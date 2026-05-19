@@ -141,7 +141,11 @@ Vue.component("doom-display", {
             _pixels: null,
             _palette: null,
             _intervalId: null,
-            _heldKeys: {},
+            // _heldKeys is initialised in mounted(); Vue 2 does not
+            // proxy data() keys that start with _, so it cannot live
+            // here as the proxy would shadow direct access through
+            // `this._heldKeys`.
+            _heldKeys: null,
             // Own-session polling - independent of the broken SaferParser
             // bulk pipeline. Each addon instance gets its own session key
             // and its own retrieval cursor through fprime_gds' RamHistory.
@@ -153,6 +157,8 @@ Vue.component("doom-display", {
         // _pixels: full FRAME_WIDTH x FRAME_HEIGHT backbuffer; _palette: 768-byte RGB.
         this._pixels = new Uint8Array(FRAME_WIDTH * FRAME_HEIGHT);
         this._palette = new Uint8Array(DEFAULT_PALETTE);
+        // Direct instance property; bypasses Vue's reactive proxy.
+        this._heldKeys = {};
         this.refreshDictionary();
 
         // Acquire a dedicated session up front so that the very first
@@ -327,9 +333,13 @@ Vue.component("doom-display", {
             if (fullName == null) {
                 return;
             }
+            // The REST shape is a flat array of enum literal / scalar
+            // values, not a list of `{value: ...}` wrappers; the
+            // fprime-gds Flask serializer rejects the wrapper form with
+            // an enum-validation error.
             const payload = {
                 "key": 0xfeedcafe,
-                "arguments": (args || []).map((a) => ({"value": a})),
+                "arguments": args || [],
             };
             _loader.load("/commands/" + fullName, "PUT", payload).catch((err) => {
                 console.warn("doom-display: command failed:", fullName, err);

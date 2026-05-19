@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import platform as platform_module
 import shutil
 import sys
 import tempfile
@@ -84,19 +85,39 @@ def default_output_path(
     """Resolve the default output path.
 
     Returns ``build-artifacts/<platform>/<deployment>/data/doom1.wad``
-    when exactly one ``<platform>/<deployment>`` pair exists under
-    ``build-artifacts/``. Falls back to ``./doom1.wad`` otherwise.
+    when a single ``<platform>/<deployment>`` pair can be unambiguously
+    selected under ``build-artifacts/``. Falls back to ``./doom1.wad``
+    otherwise.
+
+    Selection rules:
+
+    * If only one platform directory exists, use it.
+    * Otherwise prefer the host OS's native platform (``Linux``,
+      ``Darwin``, etc., per :func:`platform.system`) so cross-compile
+      outputs sitting next to a native build do not change the default
+      destination.
+    * The deployment directory under the selected platform must also
+      be unambiguous (exactly one).
     """
     try:
         if not build_artifacts.is_dir():
             return FALLBACK_OUTPUT
         platforms = [p for p in build_artifacts.iterdir() if p.is_dir()]
-        if len(platforms) != 1:
+        if not platforms:
             return FALLBACK_OUTPUT
-        deployments = [d for d in platforms[0].iterdir() if d.is_dir()]
+        if len(platforms) == 1:
+            chosen_platform = platforms[0]
+        else:
+            host = platform_module.system()  # e.g. "Linux", "Darwin"
+            host_matches = [p for p in platforms if p.name == host]
+            if len(host_matches) == 1:
+                chosen_platform = host_matches[0]
+            else:
+                return FALLBACK_OUTPUT
+        deployments = [d for d in chosen_platform.iterdir() if d.is_dir()]
         if len(deployments) != 1:
             return FALLBACK_OUTPUT
-        return deployments[0] / "data" / "doom1.wad"
+        return chosen_platform / deployments[0].name / "data" / "doom1.wad"
     except OSError:
         return FALLBACK_OUTPUT
 
