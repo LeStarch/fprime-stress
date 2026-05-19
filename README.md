@@ -177,23 +177,29 @@ the system is meant to be exercised in flight*. This one does:
 
 ```bash
 # 1) Get the shareware WAD (Apache-2.0 helper, stdlib-only Python)
-pip install ./tools/fprime-get-doom
-fprime-get-doom -o /var/lib/fprime/doom1.wad
-
-# 2) Build & launch the reference deployment
+# 2) Build & generate the deployment first so build-artifacts/ exists
 cd ../fprime-stress-reference
 fprime-util generate && fprime-util build
-./build-artifacts/Linux/FprimeStressReference/bin/FprimeStressReference \
-    -w /var/lib/fprime/doom1.wad -S
 
-# 3) (optional) install the JS GDS plugin so you can watch
-cd ../fprime-stress/gds-plugin/doom-display
-./install.sh
+# 3) Fetch the WAD into build-artifacts/<platform>/<dep>/data/
+pip install ./lib/fprime-stress/tools/fprime-get-doom
+fprime-get-doom    # auto-discovers build-artifacts/, drops doom1.wad in data/
+
+# 4) Launch from inside the deployment bin/ dir so -w defaults work
+cd build-artifacts/Linux/FprimeStressReference_ReferenceDeployment/bin
+./FprimeStressReference_ReferenceDeployment -a 127.0.0.1 -p 50100 -S
+
+# 5) (optional) install the JS GDS plugin so you can watch in a browser
+cd ../../../..    # back to project root from build-artifacts/<plat>/<dep>/bin/
+lib/fprime-stress/gds-plugin/install.sh
 ```
 
 `-S` is a smoke-test convenience that auto-starts the engine from
 `main()` so you don't need a GDS attached to issue `doom.Start`. In
 normal operation a sequence or a GDS operator sends `doom.Start`.
+`fprime-get-doom` and the binary's default `-w` both follow the F Prime
+`build-artifacts/<platform>/<deployment>/data/` convention, so a no-arg
+invocation of either works after `fprime-util build` has run.
 
 ## Contents
 
@@ -207,8 +213,10 @@ DoomSubtopology/                reusable subtopology wrapper
   DoomSubtopology.fpp
   DoomSubtopologyConfig/        per-subtopology constants
 gds-plugin/                     JS-only fprime-gds addon
-  doom-display/                 Vue component + dashboard.xml
-  install.sh
+  doom-display/                 Vue component (canvas + key bindings)
+  dashboard.xml                 Dashboard panel that hosts the addon
+  install.sh                    Drops the addon into fprime-gds and
+                                enables the Dashboard tab
 tools/
   fprime-get-doom/              Apache-2.0 fetch-and-verify helper
 THIRDPARTY/                     upstream license attribution

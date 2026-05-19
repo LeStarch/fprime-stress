@@ -21,31 +21,23 @@ canvas and forwards keyboard input as F Prime commands.
 
 ## Installation
 
-The fprime-gds JS addon system loads addons from
-`fprime_gds/flask/static/addons/` and enables them via
-`fprime_gds/flask/static/addons/enabled.js`. To install this addon:
+Run `../install.sh` (one level up from this directory). The script:
 
-1. Copy this directory to your fprime-gds installation:
+1. Copies this directory into the active fprime-gds package's
+   `flask/static/addons/doom-display/`.
+2. Appends `import "./doom-display/addon.js";` to that package's
+   `enabled.js` (idempotent).
+3. Flips `config.enableDashboards = true` in the package's
+   `flask/static/js/config.js` so the **Dashboard** tab actually
+   renders.
 
-   ```bash
-   FPRIME_GDS=$(python3 -c "import os, fprime_gds; print(os.path.dirname(fprime_gds.__file__))")
-   cp -r doom-display "$FPRIME_GDS/flask/static/addons/"
-   ```
-
-2. Append the addon to `enabled.js`:
-
-   ```bash
-   echo 'import "./doom-display/addon.js";' >> "$FPRIME_GDS/flask/static/addons/enabled.js"
-   ```
-
-3. Restart `fprime-gds` and the **DOOM** panel will appear when you
-   load the included dashboard:
-
-   ```bash
-   fprime-gds -d $(realpath dashboard.xml) ...
-   ```
+After the script finishes, restart `fprime-gds`, open the **Dashboard**
+tab in your browser, click **Upload Dashboard File**, and select
+`../dashboard.xml` (next to the install script). The **DOOM** panel
+will appear.
 
 ## Files
 
-- `addon.js`      - Vue component (`<doom-display>`) implementation.
-- `dashboard.xml` - Minimal fprime-gds dashboard that embeds the panel.
+- `addon.js`  - Vue component (`<doom-display>`) implementation.
+- The matching dashboard XML lives one directory up at
+  `gds-plugin/dashboard.xml` so it sits next to `install.sh`.

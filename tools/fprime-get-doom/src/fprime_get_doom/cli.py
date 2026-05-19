@@ -16,9 +16,17 @@ This package exists because:
 
 Usage::
 
-    fprime-get-doom                    # writes ./doom1.wad
+    fprime-get-doom                    # writes build-artifacts/<plat>/<dep>/data/doom1.wad
     fprime-get-doom -o /tmp/doom1.wad  # writes to a specific path
     fprime-get-doom --force            # overwrite existing target
+
+If the caller does not pass ``-o`` the output path defaults to
+``build-artifacts/<platform>/<deployment>/data/doom1.wad``, auto-discovered
+by globbing ``./build-artifacts/*/*/``. This matches the WAD path the
+DOOM-enabled F Prime deployment looks for at boot when run from its
+install ``bin/`` directory. If the build-artifacts directory is missing
+or ambiguous (more than one platform/deployment present), the script
+falls back to ``./doom1.wad`` and prints a hint.
 
 The script is stdlib-only on purpose (urllib + hashlib + argparse) so
 it works in minimal CI containers without needing pip.
@@ -60,6 +68,37 @@ DEFAULT_MIRRORS: List[str] = [
     "https://archive.org/download/DoomsharewareEpisode/doom1.wad",
     "https://www.doomworld.com/3ddownloads/ports/shareware_doom_iwad.zip",
 ]
+
+# Default output path matches the F Prime build-artifacts layout. When
+# `fprime-util build` runs from the project root it produces
+# `build-artifacts/<platform>/<deployment>/{bin,dict,lib}/`. We deposit
+# the WAD into a sibling `data/` directory so the deployment binary can
+# find it via the canonical `../data/doom1.wad` relative path when
+# launched from inside its own `bin/` directory.
+FALLBACK_OUTPUT = Path("doom1.wad")
+
+
+def default_output_path(
+    build_artifacts: Path = Path("build-artifacts"),
+) -> Path:
+    """Resolve the default output path.
+
+    Returns ``build-artifacts/<platform>/<deployment>/data/doom1.wad``
+    when exactly one ``<platform>/<deployment>`` pair exists under
+    ``build-artifacts/``. Falls back to ``./doom1.wad`` otherwise.
+    """
+    try:
+        if not build_artifacts.is_dir():
+            return FALLBACK_OUTPUT
+        platforms = [p for p in build_artifacts.iterdir() if p.is_dir()]
+        if len(platforms) != 1:
+            return FALLBACK_OUTPUT
+        deployments = [d for d in platforms[0].iterdir() if d.is_dir()]
+        if len(deployments) != 1:
+            return FALLBACK_OUTPUT
+        return deployments[0] / "data" / "doom1.wad"
+    except OSError:
+        return FALLBACK_OUTPUT
 
 
 class FetchError(Exception):
@@ -196,8 +235,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         type=Path,
-        default=Path("doom1.wad"),
-        help="Path to write the WAD to (default: ./doom1.wad).",
+        default=None,
+        help=(
+            "Path to write the WAD to. If omitted, defaults to the"
+            " build-artifacts data directory when a single platform/deployment"
+            " is present, else ./doom1.wad."
+        ),
     )
     parser.add_argument(
         "--mirror",
@@ -235,9 +278,19 @@ def fetch_entry(args: Optional[List[str]] = None) -> int:
         print(EXPECTED_SHA256)
         return 0
 
+    output = parsed.output if parsed.output is not None else default_output_path()
+    if parsed.output is None and not parsed.quiet:
+        if output == FALLBACK_OUTPUT:
+            print(
+                "[fprime-get-doom] build-artifacts/<plat>/<dep>/ not"
+                " auto-discovered; writing ./doom1.wad. Pass -o to override."
+            )
+        else:
+            print(f"[fprime-get-doom] default output resolved to {output}")
+
     try:
         fetch(
-            parsed.output,
+            output,
             mirrors=parsed.mirrors,
             force=parsed.force,
             quiet=parsed.quiet,
