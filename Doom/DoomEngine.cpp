@@ -214,6 +214,13 @@ bool DoomEngine::forceStart() {
                                            static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
     doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
 
+    // Synchronise DOOM's internal time-tracking (oldentertics) with
+    // the current clock. Without this, the first scheduled tick would
+    // see the ~1 s that Create consumed as accumulated game time and
+    // batch-process ~35 game tics — enough to trigger a level-load
+    // that blocks the rate-group thread for another second.
+    DG_ResetTiming();
+
     m_engineRunning = true;
     this->log_ACTIVITY_HI_EngineStarted();
     this->tlmWrite_State(EngineState::RUNNING);
