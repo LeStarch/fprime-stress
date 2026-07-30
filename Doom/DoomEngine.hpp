@@ -69,8 +69,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Emits FrameChunk telemetry and (if changed) the active palette.
     void platformDrawFrame();
 
-    //! Called from DG_SleepMs. No-op: the rate group provides pacing.
-    void platformSleepMs(U32 ms) const;
+    //! Called from DG_SleepMs. Advances virtual time rather than
+    //! blocking: the rate group provides real pacing, and in-engine
+    //! sleep/poll loops (e.g. the screen-wipe melt) complete without
+    //! stalling the rate-group thread.
+    void platformSleepMs(U32 ms);
 
     //! Called from DG_GetTicksMs to feed the DOOM timer subsystem.
     U32 platformGetTicksMs();
@@ -206,6 +209,14 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_framesThisWindow;
     //! Bytes of FrameOut + PaletteOut emitted inside the current window.
     U32 m_frameBytesThisWindow;
+
+    //! Virtual milliseconds accumulated by platformSleepMs; added to
+    //! the real elapsed time reported by platformGetTicksMs.
+    U32 m_virtualSleepMs;
+
+    //! Frames drawn by the engine within the current schedIn tick.
+    //! Used to emit telemetry for at most one frame per tick.
+    U32 m_drawsThisTick;
 
     // ------------------------------------------------------------------
     // Configuration

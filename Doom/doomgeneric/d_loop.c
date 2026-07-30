@@ -93,10 +93,6 @@ int		ticdup;
 
 fixed_t         offsetms;
 
-// Last entertic seen by TryRunTics. File-scope so DG_ResetTiming can sync it.
-
-static int oldentertics;
-
 // Use new client syncronisation code
 
 static boolean  new_sync = true;
@@ -704,18 +700,6 @@ static void SinglePlayerClear(ticcmd_set_t *set)
 }
 
 //
-// DG_ResetTiming
-// Synchronise oldentertics with the current clock so that the next
-// TryRunTics call sees zero accumulated time. Called by the host layer
-// after doomgeneric_Create to absorb the time spent in initialisation.
-//
-
-void DG_ResetTiming(void)
-{
-    oldentertics = I_GetTime() / ticdup;
-}
-
-//
 // TryRunTics
 //
 
@@ -724,6 +708,7 @@ void TryRunTics (void)
     int	i;
     int	lowtic;
     int	entertic;
+    static int oldentertics;
     int realtics;
     int	availabletics;
     int	counts;
@@ -732,18 +717,6 @@ void TryRunTics (void)
     entertic = I_GetTime() / ticdup;
     realtics = entertic - oldentertics;
     oldentertics = entertic;
-
-    // Cap catch-up to at most 1 game tic per doomgeneric_Tick() call.
-    // Under rate-group scheduling the engine is driven at exactly its
-    // native cadence (35 Hz); if a transient stall (e.g. level load)
-    // causes time to accumulate, processing many tics in one burst
-    // triggers further level transitions and compounds the overrun.
-    // Clamping to 1 spreads the debt across subsequent calls and keeps
-    // each call's CPU cost bounded.
-    if (realtics > 1)
-    {
-        realtics = 1;
-    }
 
     // in singletics mode, run a single tic every time this function
     // is called.

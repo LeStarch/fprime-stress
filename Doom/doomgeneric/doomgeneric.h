@@ -32,7 +32,6 @@ extern "C" {
 
 void doomgeneric_Create(int argc, char **argv);
 void doomgeneric_Tick();
-void DG_ResetTiming(void);
 
 
 //Implement below functions for your platform

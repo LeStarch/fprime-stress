@@ -23,6 +23,10 @@
 
 extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
+// One game tic per TryRunTics() call (d_loop.c). Upstream uses this for
+// -timedemo; here it decouples game-logic advancement from the wall
+// clock entirely so the rate group is the sole pacing mechanism.
+extern unsigned int singletics;
 struct color {
     unsigned b : 8;
     unsigned g : 8;
@@ -101,7 +105,9 @@ DoomEngine::DoomEngine(const char* compName)
       m_inputBytesThisWindow(0),
       m_schedTicks(0),
       m_framesThisWindow(0),
-      m_frameBytesThisWindow(0) {
+      m_frameBytesThisWindow(0),
+      m_virtualSleepMs(0),
+      m_drawsThisTick(0) {
     FW_ASSERT(s_instance == nullptr);
     s_instance = this;
 
@@ -140,6 +146,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     }
     // Drive one DOOM frame of game logic. upstream doomgeneric will
     // call back into DG_GetKey / DG_DrawFrame on this same thread.
+    m_drawsThisTick = 0U;
     doomgeneric_Tick();
 
     // Refresh derived telemetry. FrameOut / PaletteOut are emitted from
@@ -214,12 +221,15 @@ bool DoomEngine::forceStart() {
                                            static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
     doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
 
-    // Synchronise DOOM's internal time-tracking (oldentertics) with
-    // the current clock. Without this, the first scheduled tick would
-    // see the ~1 s that Create consumed as accumulated game time and
-    // batch-process ~35 game tics — enough to trigger a level-load
-    // that blocks the rate-group thread for another second.
-    DG_ResetTiming();
+    // Run the engine in singletics mode: exactly one game tic is built
+    // and run per doomgeneric_Tick() call. This removes every wall-
+    // clock dependency from TryRunTics — no catch-up tic bursts after
+    // stalls, and no busy-wait until the next 35 Hz tic boundary when
+    // the rate group fires marginally before DOOM's own clock rolls
+    // over (the beat between the two clocks otherwise blocks the
+    // rate-group thread for up to a full tic period, slipping the
+    // following cycle).
+    singletics = 1U;
 
     m_engineRunning = true;
     this->log_ACTIVITY_HI_EngineStarted();
@@ -361,6 +371,19 @@ void DoomEngine::platformDrawFrame() {
 
     m_framesProduced++;
     m_framesThisWindow++;
+    m_drawsThisTick++;
+
+    // The screen-wipe melt in D_Display draws its whole animation
+    // (~30 frames) inside a single doomgeneric_Tick call. Emitting
+    // full FrameOut telemetry for each would burn tens of
+    // milliseconds of rate-group time on frames TlmChan collapses to
+    // one sample anyway, slipping the following cycles. Emit only the
+    // first frame of any given tick; the post-wipe frame arrives on
+    // the next 35 Hz cycle.
+    if (m_drawsThisTick > 1U) {
+        return;
+    }
+
     this->capturePaletteIfChanged();
 
     // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
@@ -436,26 +459,32 @@ void DoomEngine::capturePaletteIfChanged() {
     }
 }
 
-void DoomEngine::platformSleepMs(U32 ms) const {
-    // Intentional no-op: rate group provides pacing.
-    (void)ms;
+void DoomEngine::platformSleepMs(U32 ms) {
+    // Never block the rate-group thread. Instead treat a sleep request
+    // as virtual time passing: advance the clock DG_GetTicksMs reports
+    // by the requested amount. The only in-engine sleep loops (the
+    // screen-wipe melt in D_Display, and TryRunTics' wait loop, which
+    // singletics mode never reaches) poll I_GetTime between I_Sleep(1)
+    // calls, so advancing virtual time lets them run to completion
+    // immediately instead of stalling the 35 Hz cycle.
+    m_virtualSleepMs += ms;
 }
 
 U32 DoomEngine::platformGetTicksMs() {
     if (!m_engineStartValid) {
-        return 0U;
+        return m_virtualSleepMs;
     }
     Os::RawTime current;
     const Os::RawTime::Status nowStatus = current.now();
     if (nowStatus != Os::RawTime::Status::OP_OK) {
-        return 0U;
+        return m_virtualSleepMs;
     }
     U32 deltaUsec = 0U;
     const Os::RawTime::Status diffStatus = current.getDiffUsec(m_engineStart, deltaUsec);
     if (diffStatus != Os::RawTime::Status::OP_OK) {
-        return 0U;
+        return m_virtualSleepMs;
     }
-    return deltaUsec / 1000U;
+    return (deltaUsec / 1000U) + m_virtualSleepMs;
 }
 
 void DoomEngine::platformSetTitle(const char* title) {
