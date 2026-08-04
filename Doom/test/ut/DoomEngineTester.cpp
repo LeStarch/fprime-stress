@@ -6,6 +6,10 @@
 #include "Doom/test/ut/DoomEngineTester.hpp"
 #include "Doom/FppConstantsAc.hpp"
 
+extern "C" {
+#include "Doom/doomgeneric/doomgeneric.h"
+}
+
 namespace Doom {
 
 DoomEngineTester::DoomEngineTester()
@@ -141,6 +145,60 @@ void DoomEngineTester::testSchedInWhenEngineOff() {
     ASSERT_TLM_FrameOut00_SIZE(0);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_EVENTS_EngineStopped_SIZE(0);
+}
+
+void DoomEngineTester::testVirtualSleepAdvancesTicks() {
+    // Engine not started: the reported clock is exactly the virtual
+    // time accumulated by platformSleepMs.
+    ASSERT_EQ(this->component.platformGetTicksMs(), 0U);
+    this->component.platformSleepMs(7U);
+    this->component.platformSleepMs(3U);
+    ASSERT_EQ(this->component.platformGetTicksMs(), 10U);
+}
+
+void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
+    static U8 buf[DoomEngine::FRAME_BYTES];
+    for (U32 i = 0; i < DoomEngine::FRAME_BYTES; ++i) {
+        buf[i] = static_cast<U8>(i & 0xFFU);
+    }
+    DG_ScreenBuffer = reinterpret_cast<pixel_t*>(buf);
+
+    // First draw of a tick is emitted live.
+    this->component.platformDrawFrame();
+    ASSERT_TLM_FrameOut00_SIZE(1);
+    ASSERT_EQ(this->tlmHistory_FrameOut00->at(0).arg.get_frame(), 1U);
+
+    // Second draw of the same tick is buffered, not emitted.
+    this->component.platformDrawFrame();
+    ASSERT_TLM_FrameOut00_SIZE(1);
+    ASSERT_EQ(this->component.m_meltCount, 1U);
+    ASSERT_EQ(this->component.m_meltFrameNumbers[0], 2U);
+
+    DG_ScreenBuffer = nullptr;
+}
+
+void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
+    static U8 buf[DoomEngine::FRAME_BYTES];
+    (void)::memset(buf, 0xA5, sizeof(buf));
+    DG_ScreenBuffer = reinterpret_cast<pixel_t*>(buf);
+
+    // Capture one melt frame (first draw emits, second buffers).
+    this->component.platformDrawFrame();
+    this->component.platformDrawFrame();
+    ASSERT_TLM_FrameOut00_SIZE(1);
+    ASSERT_EQ(this->component.m_meltCount, 1U);
+
+    // Drive schedIn with the engine "running" via the test seam: the
+    // melt branch plays back the buffered frame without ticking DOOM.
+    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->invoke_to_schedIn(0, 0);
+    this->component.m_engineRunning.store(false, std::memory_order_release);
+
+    ASSERT_TLM_FrameOut00_SIZE(2);
+    ASSERT_EQ(this->tlmHistory_FrameOut00->at(1).arg.get_frame(), 2U);
+    ASSERT_EQ(this->component.m_meltCount, 0U);
+
+    DG_ScreenBuffer = nullptr;
 }
 
 }  // namespace Doom

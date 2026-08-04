@@ -34,6 +34,9 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testOverflowEmitsEvent();
     void testStopCommandResponds();
     void testSchedInWhenEngineOff();
+    void testVirtualSleepAdvancesTicks();
+    void testDrawFrameEmitsFirstDrawAndBuffersMelt();
+    void testSchedInPlaysBackMeltFrames();
 
   private:
     // Wiring and init provided by auto-generated helpers.

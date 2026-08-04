@@ -7,10 +7,10 @@
 // extern "C" DG_* hooks at the bottom of this file, which delegate to
 // the singleton DoomEngine instance.
 //
-// Cross-thread communication is limited to the key queue: command
-// handlers run on the active component thread and only enqueue key
-// events under m_keyMutex; the rate-group thread drains the queue
-// inside DG_GetKey. No other state is shared across threads.
+// Cross-thread communication is limited to the key queue (guarded by
+// m_keyMutex) and the start/stop handoff: forceStart/Stop publish all
+// engine state, then release-store m_engineRunning; schedIn_handler
+// acquire-loads it before touching any engine state.
 // ======================================================================
 #include "Doom/DoomEngine.hpp"
 
@@ -23,10 +23,11 @@
 
 extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
+#include "Doom/doomgeneric/doomtype.h"
 // One game tic per TryRunTics() call (d_loop.c). Upstream uses this for
 // -timedemo; here it decouples game-logic advancement from the wall
 // clock entirely so the rate group is the sole pacing mechanism.
-extern unsigned int singletics;
+extern boolean singletics;
 struct color {
     unsigned b : 8;
     unsigned g : 8;
@@ -107,9 +108,11 @@ DoomEngine::DoomEngine(const char* compName)
       m_framesThisWindow(0),
       m_frameBytesThisWindow(0),
       m_virtualSleepMs(0),
+      m_lastReportedTickMs(0),
       m_drawsThisTick(0),
       m_meltHead(0),
-      m_meltCount(0) {
+      m_meltCount(0),
+      m_framesDropped(0) {
     FW_ASSERT(s_instance == nullptr);
     s_instance = this;
 
@@ -118,6 +121,8 @@ DoomEngine::DoomEngine(const char* compName)
     (void)::memset(m_wadPath, 0, sizeof(m_wadPath));
     (void)::memset(m_argvStorage, 0, sizeof(m_argvStorage));
     (void)::memset(m_argvPointers, 0, sizeof(m_argvPointers));
+    (void)::memset(m_meltFrames, 0, sizeof(m_meltFrames));
+    (void)::memset(m_meltFrameNumbers, 0, sizeof(m_meltFrameNumbers));
 }
 
 DoomEngine::~DoomEngine() {
@@ -141,7 +146,9 @@ void DoomEngine::setWadPath(const char* wadPath) {
 // ----------------------------------------------------------------------
 
 void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
-    if (!m_engineRunning) {
+    // Acquire pairs with the release store in forceStart(): all engine
+    // state written before the start handoff is visible here.
+    if (!m_engineRunning.load(std::memory_order_acquire)) {
         // Engine not started - publish IDLE state heartbeat.
         this->tlmWrite_State(EngineState::OFF);
         return;
@@ -162,8 +169,9 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         doomgeneric_Tick();
     }
 
-    // Refresh derived telemetry. FrameOut / PaletteOut are emitted from
-    // DG_DrawFrame which runs inside Tick above.
+    // Refresh derived telemetry. FrameOut / PaletteOut are emitted
+    // either by the melt playback above or from DG_DrawFrame inside
+    // Tick.
     this->tlmWrite_State(EngineState::RUNNING);
     this->tlmWrite_FrameCount(m_framesProduced);
 
@@ -173,7 +181,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     m_keyMutex.unLock();
     this->tlmWrite_KeyQueueDepth(depth);
     this->tlmWrite_KeyEventsDropped(dropped);
-    this->tlmWrite_FramesDropped(0U);  // No frame drops in pull model.
+    this->tlmWrite_FramesDropped(m_framesDropped);
 
     // Emit derived rate telemetry once per RATE_WINDOW_TICKS. With the
     // deployment's 35 Hz rate group (matching DOOM's native cadence)
@@ -217,7 +225,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 // ----------------------------------------------------------------------
 
 bool DoomEngine::forceStart() {
-    if (m_engineRunning) {
+    if (m_engineRunning.load(std::memory_order_acquire)) {
         this->log_WARNING_LO_AlreadyRunning();
         return false;
     }
@@ -230,9 +238,13 @@ bool DoomEngine::forceStart() {
     // doomgeneric caches argv (as myargv) and walks it later from
     // M_CheckParm, so both the pointer array and the backing strings
     // must outlive the call. Both live in DoomEngine members.
-    const int argc = this->buildEngineArgv(m_argvPointers,
-                                           static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
-    doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
+    // Discard any per-run pacing state left over from a previous run
+    // (e.g. a melt playback interrupted by Stop).
+    m_meltHead = 0U;
+    m_meltCount = 0U;
+    m_drawsThisTick = 0U;
+    m_virtualSleepMs = 0U;
+    m_lastReportedTickMs = 0U;
 
     // Run the engine in singletics mode: exactly one game tic is built
     // and run per doomgeneric_Tick() call. This removes every wall-
@@ -241,10 +253,17 @@ bool DoomEngine::forceStart() {
     // the rate group fires marginally before DOOM's own clock rolls
     // over (the beat between the two clocks otherwise blocks the
     // rate-group thread for up to a full tic period, slipping the
-    // following cycle).
+    // following cycle). Set before Create so the tics run inside
+    // D_DoomLoop's startup are already singletics-paced (upstream
+    // likewise sets it during D_DoomMain for -timedemo).
     singletics = 1U;
 
-    m_engineRunning = true;
+    const int argc = this->buildEngineArgv(m_argvPointers,
+                                           static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
+    doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
+
+    // Release pairs with the acquire load in schedIn_handler.
+    m_engineRunning.store(true, std::memory_order_release);
     this->log_ACTIVITY_HI_EngineStarted();
     this->tlmWrite_State(EngineState::RUNNING);
     return true;
@@ -259,8 +278,8 @@ void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
 void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     // Cooperative stop - the rate group will simply stop calling Tick.
     // DOOM has no clean shutdown path, so we just stop driving it.
-    if (m_engineRunning) {
-        m_engineRunning = false;
+    if (m_engineRunning.load(std::memory_order_acquire)) {
+        m_engineRunning.store(false, std::memory_order_release);
         this->log_ACTIVITY_HI_EngineStopped();
     }
     this->tlmWrite_State(EngineState::OFF);
@@ -400,14 +419,17 @@ void DoomEngine::platformDrawFrame() {
             (void)::memcpy(m_meltFrames[slot], src, FRAME_BYTES);
             m_meltFrameNumbers[slot] = m_framesProduced;
             m_meltCount++;
+        } else {
+            // Buffer full: the frame is neither emitted nor buffered.
+            m_framesDropped++;
         }
         return;
     }
 
-    this->emitFrame(src, m_framesProduced);
+    this->emitFrame(*reinterpret_cast<const U8(*)[FRAME_BYTES]>(src), m_framesProduced);
 }
 
-void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
+void DoomEngine::emitFrame(const U8 (&src)[FRAME_BYTES], U32 frameNumber) {
     this->capturePaletteIfChanged();
 
     // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
@@ -495,20 +517,23 @@ void DoomEngine::platformSleepMs(U32 ms) {
 }
 
 U32 DoomEngine::platformGetTicksMs() {
-    if (!m_engineStartValid) {
-        return m_virtualSleepMs;
+    // The reported clock is kept monotonic via m_lastReportedTickMs:
+    // getDiffUsec overflows its U32 after ~71.6 min, and a backwards
+    // step would stall in-engine time-poll loops.
+    U32 computed = m_virtualSleepMs;
+    if (m_engineStartValid) {
+        Os::RawTime current;
+        if (current.now() == Os::RawTime::Status::OP_OK) {
+            U32 deltaUsec = 0U;
+            if (current.getDiffUsec(m_engineStart, deltaUsec) == Os::RawTime::Status::OP_OK) {
+                computed = (deltaUsec / 1000U) + m_virtualSleepMs;
+            }
+        }
     }
-    Os::RawTime current;
-    const Os::RawTime::Status nowStatus = current.now();
-    if (nowStatus != Os::RawTime::Status::OP_OK) {
-        return m_virtualSleepMs;
+    if (computed > m_lastReportedTickMs) {
+        m_lastReportedTickMs = computed;
     }
-    U32 deltaUsec = 0U;
-    const Os::RawTime::Status diffStatus = current.getDiffUsec(m_engineStart, deltaUsec);
-    if (diffStatus != Os::RawTime::Status::OP_OK) {
-        return m_virtualSleepMs;
-    }
-    return (deltaUsec / 1000U) + m_virtualSleepMs;
+    return m_lastReportedTickMs;
 }
 
 void DoomEngine::platformSetTitle(const char* title) {

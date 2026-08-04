@@ -5,29 +5,54 @@
 
 #include "Doom/test/ut/DoomEngineTester.hpp"
 
+#include <memory>
+
 TEST(Nominal, CommandsEnqueueKeys) {
-    Doom::DoomEngineTester tester;
-    tester.testCommandsEnqueueKeys();
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testCommandsEnqueueKeys();
 }
 
 TEST(Nominal, ParallelPortsEnqueueKeys) {
-    Doom::DoomEngineTester tester;
-    tester.testParallelPortsEnqueueKeys();
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testParallelPortsEnqueueKeys();
 }
 
 TEST(OffNominal, KeyQueueOverflowEmitsEvent) {
-    Doom::DoomEngineTester tester;
-    tester.testOverflowEmitsEvent();
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testOverflowEmitsEvent();
 }
 
 TEST(Nominal, StopRespondsWhenNotRunning) {
-    Doom::DoomEngineTester tester;
-    tester.testStopCommandResponds();
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testStopCommandResponds();
 }
 
 TEST(Nominal, SchedInPulseSafeWhenEngineOff) {
-    Doom::DoomEngineTester tester;
-    tester.testSchedInWhenEngineOff();
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testSchedInWhenEngineOff();
+}
+
+TEST(Nominal, VirtualSleepAdvancesTicks) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testVirtualSleepAdvancesTicks();
+}
+
+TEST(Nominal, DrawFrameEmitsFirstDrawAndBuffersMelt) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testDrawFrameEmitsFirstDrawAndBuffersMelt();
+}
+
+TEST(Nominal, SchedInPlaysBackMeltFrames) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testSchedInPlaysBackMeltFrames();
 }
 
 int main(int argc, char** argv) {

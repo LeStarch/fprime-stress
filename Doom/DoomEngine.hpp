@@ -5,8 +5,10 @@
 // The engine is driven entirely from the rate-group thread that calls
 // the schedIn port: one Tick of doomgeneric is executed per call. The
 // only other thread that ever touches component state is the command-
-// dispatch thread, which only writes into the key queue. That queue is
-// the single piece of shared state and is guarded by Os::Mutex.
+// dispatch thread, which writes into the mutex-guarded key queue and
+// performs the start/stop handoff: forceStart/Stop publish engine
+// state and then release-store the atomic m_engineRunning flag, which
+// schedIn_handler acquire-loads before touching any engine state.
 //
 // No worker thread is spawned and no internal sleep is performed - the
 // rate group is the sole pacing mechanism. This makes execution
@@ -21,9 +23,15 @@
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
 
+#include <atomic>
+
 namespace Doom {
 
 class DoomEngine final : public DoomEngineComponentBase {
+    //! Unit-test seam: lets the Tester drive the melt-playback branch
+    //! of schedIn_handler without starting the real engine.
+    friend class DoomEngineTester;
+
   public:
     //! Maximum number of pending key events queued for the DOOM engine.
     static constexpr FwSizeType KEY_QUEUE_CAPACITY = 64;
@@ -44,10 +52,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
     //! Capacity (in frames) of the screen-wipe melt playback buffer.
-    //! The melt animation spans roughly 40-70 engine draws; 128 gives
-    //! comfortable margin. Overflowing frames are dropped (the wipe
-    //! then cuts to the live frame early).
-    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 128;
+    //! The melt animation spans roughly 40-70 engine draws; 80 gives
+    //! margin above the observed worst case while bounding the static
+    //! footprint to 80 x 256 KB = ~20.5 MB. Overflowing frames are
+    //! dropped and counted in FramesDropped (the wipe then cuts to the
+    //! live frame early).
+    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 80;
 
   public:
     explicit DoomEngine(const char* compName);
@@ -95,7 +105,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Programmatic engine bring-up. Identical to the Start command
     //! except no cmdResponse is emitted. Intended for the autoStart
     //! path in Main.cpp where the binary is launched headless without
-    //! a GDS to dispatch the Start command. Returns true on success.
+    //! a GDS to dispatch the Start command; must be invoked before the
+    //! rate groups start driving schedIn. Returns true on success.
     bool forceStart();
 
   private:
@@ -130,9 +141,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     bool enqueueKey(bool pressed, U8 code);
 
     //! Emit one full frame as FrameOut chunk telemetry plus the active
-    //! palette. src points at FRAME_BYTES of 8-bit palette indices;
+    //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
-    void emitFrame(const U8* src, U32 frameNumber);
+    void emitFrame(const U8 (&src)[FRAME_BYTES], U32 frameNumber);
 
     //! Capture the active DOOM palette out of the engine's color table.
     //! Bumps m_paletteGeneration if anything changed. Rate-group thread.
@@ -174,7 +185,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_framesProduced;
 
     //! True once Start has fired and doomgeneric_Create has returned.
-    bool m_engineRunning;
+    //! Release-stored by the command thread, acquire-loaded by the
+    //! rate-group thread; carries the start-state publication.
+    std::atomic<bool> m_engineRunning;
 
     //! Engine start reference time for DG_GetTicksMs.
     Os::RawTime m_engineStart;
@@ -225,6 +238,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! the real elapsed time reported by platformGetTicksMs.
     U32 m_virtualSleepMs;
 
+    //! Highest tick value reported so far; keeps the engine clock
+    //! monotonic across getDiffUsec overflow (~71.6 min).
+    U32 m_lastReportedTickMs;
+
     //! Frames drawn by the engine within the current schedIn tick.
     //! Used to emit telemetry for at most one frame per tick.
     U32 m_drawsThisTick;
@@ -238,6 +255,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     FwSizeType m_meltHead;
     //! Number of buffered melt frames.
     FwSizeType m_meltCount;
+
+    //! Frames dropped because the melt buffer was full.
+    U32 m_framesDropped;
 
     // ------------------------------------------------------------------
     // Configuration

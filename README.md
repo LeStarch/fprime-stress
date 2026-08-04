@@ -108,7 +108,7 @@ telemetry channel ids (`FrameOut00` … `FrameOut79`), one per
 scanline group of `ROWS_PER_CHUNK` rows. Each chunk position has
 its own slot, so a single cycle produces 80 surviving samples
 instead of one. A function-pointer dispatch table in
-`DoomEngine::platformDrawFrame` maps the chunk index to the
+`DoomEngine::emitFrame` (invoked from `platformDrawFrame`) maps the chunk index to the
 matching `tlmWrite_FrameOutNN` member function so the per-cycle
 loop stays a tight `for` over the chunk count. The browser plugin
 subscribes to all 80 channel ids and reassembles the full 640×400
@@ -205,7 +205,7 @@ invocation of either works after `fprime-util build` has run.
 
 ```
 Doom/                           DoomEngine component
-  Doom.fpp / Doom.cpp / Doom.hpp
+  Doom.fpp / DoomEngine.cpp / DoomEngine.hpp
   Commands.fppi / Telemetry.fppi / Events.fppi
   doomgeneric/                  vendored upstream DOOM source (GPLv2)
   test/ut/                      googletest unit tests
@@ -238,6 +238,21 @@ is **sync**: each rate-group tick runs DOOM inline on the
 trips `RateGroupCycleSlip` immediately rather than silently being
 absorbed by a queue — which is the discipline you want from a
 flight-software rate group.
+
+## Pacing model
+
+The engine runs in upstream doomgeneric's `singletics` mode: exactly
+one game tic is built and run per `schedIn` cycle, with no wall-clock
+coupling — the rate group is the sole pacing authority. `DG_SleepMs`
+never blocks; it advances a virtual clock that `DG_GetTicksMs` adds to
+real elapsed time, so in-engine sleep/poll loops (notably the
+screen-wipe melt) complete without stalling the rate-group thread.
+When one tic draws multiple frames (a melt), the first frame is
+emitted live and the rest are captured into a bounded ring buffer
+(`MELT_QUEUE_CAPACITY` frames) that `schedIn_handler` plays back one
+frame per cycle, so the melt animates on the downlink at its native
+pace. Frames that overflow the buffer are dropped and counted in the
+`FramesDropped` channel.
 
 ## Licensing
 

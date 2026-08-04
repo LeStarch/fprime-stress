@@ -42,7 +42,7 @@ i_sdlsound.c
 ```
 
 The required `DG_*` platform glue functions are implemented in
-`Doom/Doom.cpp` outside the vendored tree.
+`Doom/DoomEngine.cpp` outside the vendored tree.
 
 ## Combined work licensing
 
