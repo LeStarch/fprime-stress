@@ -1,17 +1,24 @@
 // ======================================================================
-// \title  Doom.hpp
+// \title  DoomEngine.hpp
 // \brief  F Prime component that wraps the open-source DOOM engine.
 //
 // The engine is driven entirely from the rate-group thread that calls
-// the schedIn port: one Tick of doomgeneric is executed per call. The
-// only other thread that ever touches component state is the command-
-// dispatch thread, which only writes into the key queue. That queue is
-// the single piece of shared state and is guarded by Os::Mutex.
+// the schedIn port: each call runs one doomgeneric Tick, or replays
+// one buffered melt frame if a screen wipe is pending. Component
+// state is otherwise touched only by threads performing the start/
+// stop handoff (the command-dispatch thread, and the main thread for
+// autoStart) plus the mutex-guarded key queue: forceStart first waits
+// for any in-flight schedIn tick to finish (m_tickInProgress rendezvous),
+// publishes engine state, then stores the atomic m_engineRunning
+// flag, which schedIn_handler loads (seq_cst, ordered against
+// m_tickInProgress) before touching any engine state.
 //
-// No worker thread is spawned and no internal sleep is performed - the
-// rate group is the sole pacing mechanism. This makes execution
-// deterministic and avoids any need for OS-specific scheduling
-// primitives beyond the OSAL mutex.
+// No worker thread is spawned and the tick path never sleeps - the
+// rate group is the sole pacing mechanism (forceStart's bounded
+// rendezvous wait runs on the caller's thread, never the rate-group
+// thread). This makes execution deterministic: cross-thread state is
+// limited to the OSAL mutexes, the std::atomic members, and the
+// bounded Os::Task::delay polling in forceStart's rendezvous.
 // ======================================================================
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
@@ -21,9 +28,15 @@
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
 
+#include <atomic>
+
 namespace Doom {
 
 class DoomEngine final : public DoomEngineComponentBase {
+    //! Unit-test seam: lets the Tester drive the melt-playback branch
+    //! of schedIn_handler without starting the real engine.
+    friend class DoomEngineTester;
+
   public:
     //! Maximum number of pending key events queued for the DOOM engine.
     static constexpr FwSizeType KEY_QUEUE_CAPACITY = 64;
@@ -44,10 +57,21 @@ class DoomEngine final : public DoomEngineComponentBase {
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
     //! Capacity (in frames) of the screen-wipe melt playback buffer.
-    //! The melt animation spans roughly 40-70 engine draws; 128 gives
-    //! comfortable margin. Overflowing frames are dropped (the wipe
-    //! then cuts to the live frame early).
-    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 128;
+    //! The melt animation spans roughly 40-70 engine draws; 80 gives
+    //! margin above the observed worst case while bounding the static
+    //! footprint to 80 x 256 KB = ~20.5 MB. Overflowing frames are
+    //! dropped and counted in FramesDropped (the wipe then cuts to the
+    //! live frame early).
+    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 80;
+
+    //! Microseconds slept per forceStart rendezvous poll.
+    static constexpr U32 RENDEZVOUS_DELAY_USEC = 1000;
+
+    //! Max rendezvous polls: x RENDEZVOUS_DELAY_USEC = ~1 s bound.
+    static constexpr U32 RENDEZVOUS_MAX_SPINS = 1000;
+
+    //! Number of RGB entries in the DOOM palette.
+    static constexpr FwSizeType PALETTE_ENTRIES = Doom::PALETTE_BYTES / 3;
 
   public:
     explicit DoomEngine(const char* compName);
@@ -55,11 +79,12 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Set the path to the IWAD that should be passed to
     //! doomgeneric_Create when the engine starts. Must be called before
-    //! the Start command is dispatched.
+    //! the Start command is dispatched. Asserts if the path does not
+    //! fit in WAD_PATH_MAX (rejects rather than truncates).
     void setWadPath(const char* wadPath);
 
     //! Accessor used by the extern "C" DG_* platform glue to reach back
-    //! into the active component instance. There is exactly one Doom
+    //! into the component instance. There is exactly one Doom
     //! component instance per deployment by design.
     static DoomEngine* getInstance();
 
@@ -72,7 +97,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     void platformInit();
 
     //! Called from DG_DrawFrame at the end of each rendered DOOM frame.
-    //! Emits FrameChunk telemetry and (if changed) the active palette.
+    //! The first draw of a tick is emitted as FrameChunk telemetry plus
+    //! the active palette; subsequent draws in the same tick (a screen
+    //! wipe) are buffered into the melt ring, or dropped and counted in
+    //! FramesDropped when the ring is full.
     void platformDrawFrame();
 
     //! Called from DG_SleepMs. Advances virtual time rather than
@@ -95,7 +123,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Programmatic engine bring-up. Identical to the Start command
     //! except no cmdResponse is emitted. Intended for the autoStart
     //! path in Main.cpp where the binary is launched headless without
-    //! a GDS to dispatch the Start command. Returns true on success.
+    //! a GDS to dispatch the Start command. Safe to call while the
+    //! rate groups are running: it rendezvouses with any in-flight
+    //! schedIn tick before touching engine state. Returns true on
+    //! success.
     bool forceStart();
 
   private:
@@ -129,8 +160,25 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! true on success, false if the queue was full.
     bool enqueueKey(bool pressed, U8 code);
 
+    //! Enqueue a down+up pair atomically: both events are queued or
+    //! neither is, so an overflow cannot leave a key stuck down.
+    bool enqueueKeyTap(U8 code);
+
+    //! Shared enqueue core: queues all entries or none, updating the
+    //! rate-window counters and overflow reporting under m_keyMutex.
+    bool enqueueKeyEvents(const U16* entries, FwSizeType count);
+
+    //! Record and emit the State telemetry channel.
+    void publishState(EngineState state);
+
+    //! Pack one key event into the queue's wire format: bit 8 is the
+    //! pressed flag, bits 0-7 the key code (unpacked by platformGetKey).
+    static constexpr U16 packKeyEntry(bool pressed, U8 code) {
+        return static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
+    }
+
     //! Emit one full frame as FrameOut chunk telemetry plus the active
-    //! palette. src points at FRAME_BYTES of 8-bit palette indices;
+    //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
     void emitFrame(const U8* src, U32 frameNumber);
 
@@ -164,17 +212,35 @@ class DoomEngine final : public DoomEngineComponentBase {
     // ------------------------------------------------------------------
 
     //! Most recently captured palette (R0,G0,B0,...).
-    U8 m_pendingPalette[256 * 3];
+    U8 m_pendingPalette[Doom::PALETTE_BYTES];
     //! Counter incremented whenever the engine swaps palettes.
     U32 m_paletteGeneration;
-    //! Palette generation value last sent to the ground.
-    U32 m_lastEmittedPaletteGeneration;
 
     //! Total frames produced by the engine.
     U32 m_framesProduced;
 
-    //! True once Start has fired and doomgeneric_Create has returned.
-    bool m_engineRunning;
+    //! Last state published via publishState; the not-running
+    //! heartbeat re-emits it (preserving FAILED) except a stale
+    //! RUNNING, which it self-heals to OFF.
+    std::atomic<EngineState::T> m_lastState;
+
+    //! True while the engine is being driven by the rate group.
+    //! All loads/stores are seq_cst so the handoff with
+    //! m_tickInProgress shares one total order (see forceStart).
+    std::atomic<bool> m_engineRunning;
+
+    //! True while schedIn_handler is executing. Set before the handler
+    //! reads m_engineRunning; forceStart waits for it to clear before
+    //! mutating engine state (see the rendezvous in forceStart).
+    std::atomic<bool> m_tickInProgress;
+
+    //! True once doomgeneric_Create has run. The vendored engine's
+    //! initialisation is one-shot, so Create is never invoked twice.
+    bool m_engineCreated;
+
+    //! Serializes concurrent forceStart callers (autoStart thread vs
+    //! a ground Start command).
+    Os::Mutex m_startMutex;
 
     //! Engine start reference time for DG_GetTicksMs.
     Os::RawTime m_engineStart;
@@ -203,8 +269,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_keysDropped;
 
     //! Per-window counters for the input-rate telemetry. Incremented
-    //! under m_keyMutex by every enqueueKey() call (command and
-    //! parallel-port paths both go through enqueueKey).
+    //! under m_keyMutex by enqueueKeyEvents() (all command and
+    //! parallel-port paths funnel through it).
     U32 m_inputEventsThisWindow;
     U32 m_inputBytesThisWindow;
 
@@ -214,16 +280,27 @@ class DoomEngine final : public DoomEngineComponentBase {
     // input rates harvested from m_inputEventsThisWindow etc.
     // ------------------------------------------------------------------
 
-    //! Total scheduler ticks since engine start.
+    //! Scheduler ticks inside the current rate window.
     U32 m_schedTicks;
     //! Frames produced inside the current rate window.
     U32 m_framesThisWindow;
     //! Bytes of FrameOut + PaletteOut emitted inside the current window.
     U32 m_frameBytesThisWindow;
 
+    // ------------------------------------------------------------------
+    // Engine clock and melt-playback state (rate-group thread; reset
+    // by forceStart on the caller's thread during the start/stop
+    // handoff, after the m_tickInProgress rendezvous).
+    // ------------------------------------------------------------------
+
     //! Virtual milliseconds accumulated by platformSleepMs; added to
     //! the real elapsed time reported by platformGetTicksMs.
     U32 m_virtualSleepMs;
+
+    //! Real microseconds elapsed since Start, accumulated in 64 bits
+    //! with m_engineStart rebased on every read so getDiffUsec's U32
+    //! range (~71.6 min) is never exceeded.
+    U64 m_realElapsedUsec;
 
     //! Frames drawn by the engine within the current schedIn tick.
     //! Used to emit telemetry for at most one frame per tick.
@@ -239,11 +316,15 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Number of buffered melt frames.
     FwSizeType m_meltCount;
 
+    //! Frames dropped because the melt buffer was full.
+    U32 m_framesDropped;
+
     // ------------------------------------------------------------------
     // Configuration
     // ------------------------------------------------------------------
 
-    //! Configured WAD path. Empty string means "let DOOM auto-search".
+    //! Configured WAD path. Must be set before Start: an empty path
+    //! is rejected with WadUnavailable (auto-search is not permitted).
     char m_wadPath[WAD_PATH_MAX];
 
     //! Argv storage for doomgeneric_Create. DOOM's parser caches both

@@ -1,14 +1,14 @@
 # doom-display: F Prime GDS JS Addon
 
 A JavaScript-only `fprime-gds` addon that renders the DOOM frame
-buffer (emitted as `DoomEngine.FrameOut` telemetry) onto an HTML
+buffer (emitted as `FrameOut00`..`FrameOut79` telemetry) onto an HTML
 canvas and forwards keyboard input as F Prime commands.
 
 ## What it does
 
-- Subscribes to the `DoomEngine.FrameOut` telemetry channel and
-  reassembles the 20 incoming `FrameChunk` rows into a 320x200
-  palette-indexed frame buffer.
+- Subscribes to the 80 `FrameOut00`..`FrameOut79` telemetry channels
+  and reassembles the incoming `FrameChunk` samples (5 rows each)
+  into a 640x400 palette-indexed frame buffer.
 - Subscribes to `DoomEngine.PaletteOut` and uses the latest 256-entry
   RGB palette to colourise the frame.
 - Renders the frame onto an HTML5 canvas at 2x integer scale.

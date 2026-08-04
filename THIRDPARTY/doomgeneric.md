@@ -1,8 +1,8 @@
 # doomgeneric (third-party)
 
 This deployment vendors the upstream **doomgeneric** project from
-[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) under
-`Doom/doomgeneric/`. doomgeneric in turn is a port of the
+[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) at commit
+`dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under `Doom/doomgeneric/`. doomgeneric in turn is a port of the
 [Chocolate Doom](https://github.com/chocolate-doom/chocolate-doom)
 engine, which is itself derived from the original id Software DOOM
 source release.
@@ -42,7 +42,7 @@ i_sdlsound.c
 ```
 
 The required `DG_*` platform glue functions are implemented in
-`Doom/Doom.cpp` outside the vendored tree.
+`Doom/DoomEngine.cpp` outside the vendored tree.
 
 ## Combined work licensing
 

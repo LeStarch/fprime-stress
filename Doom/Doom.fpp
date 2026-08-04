@@ -53,8 +53,9 @@ module Doom {
     pixels: [Doom.FRAME_CHUNK_BYTES] U8
   }
 
-  @ The active DOOM palette as a flat RGB byte array. Emitted whenever
-  @ the engine changes the palette (level start, damage tint, etc.).
+  @ The active DOOM palette as a flat RGB byte array. Emitted with
+  @ every frame so the ground converges on the active palette
+  @ regardless of when it attached.
   struct Palette {
     @ Monotonically increasing palette generation counter.
     generation: U32
@@ -67,10 +68,10 @@ module Doom {
   # ----------------------------------------------------------------------
 
   enum EngineState {
-    OFF       = 0  @< Engine has not been started yet.
-    STARTING  = 1  @< doomgeneric_Create is running on the worker task.
+    OFF       = 0  @< Engine not running: never started, or stopped (resumable).
+    STARTING  = 1  @< Engine bring-up is running in the Start handler.
     RUNNING   = 2  @< Engine is ticking and producing frames.
-    FAILED    = 3  @< Engine task exited or failed to start.
+    FAILED    = 3  @< Engine failed to start (e.g. WAD unavailable).
   } default OFF
 
   # ----------------------------------------------------------------------
@@ -141,20 +142,24 @@ module Doom {
   @
   @ Engine pacing is driven entirely from the schedIn port: each call
   @ runs exactly one doomgeneric_Tick (one DOOM frame of game logic)
-  @ on the rate-group thread. doomgeneric_Create is invoked
-  @ synchronously by the Start command handler.
+  @ or replays one buffered screen-wipe melt frame on the rate-group
+  @ thread. doomgeneric_Create is invoked synchronously by the first
+  @ Start after rendezvousing with any in-flight tick; a Start after a
+  @ Stop resumes the existing engine.
   @
   @ Declared passive: schedIn is sync (runs on the rate-group thread)
   @ and all command handlers are sync (run on the cmdDispatch thread),
   @ so the component owns no thread of its own. Cross-thread state is
-  @ limited to the key queue, which is mutex-guarded.
+  @ limited to the mutex-guarded key queue and the std::atomic
+  @ members (start/stop, tick-in-progress, last-published-state).
   passive component DoomEngine {
 
     # ------------------------------------------------------------------
     # Scheduled ports
     # ------------------------------------------------------------------
 
-    @ Periodic scheduled call driving one doomgeneric_Tick per pulse.
+    @ Periodic scheduled call driving one doomgeneric_Tick per pulse
+    @ (or one buffered melt-frame replay while a screen wipe drains).
     @ Declared sync so a tick that overruns its rate-group budget
     @ trips Svc.ActiveRateGroup's cycle-slip telemetry directly,
     @ giving hard evidence of an over-budget engine instead of

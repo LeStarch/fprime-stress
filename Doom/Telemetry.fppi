@@ -258,8 +258,8 @@ telemetry FrameOut79: Doom.FrameChunk id 79
 @ Monotonically increasing count of frames the engine has produced.
 telemetry FrameCount: U32 id 80
 
-@ Current DOOM 256-entry RGB palette. Emitted on engine start and
-@ whenever the engine swaps palettes.
+@ Current DOOM 256-entry RGB palette. Emitted with every frame so a
+@ late-attaching ground system converges on the active palette.
 telemetry PaletteOut: Doom.Palette id 81
 
 @ Current high-level engine state.
@@ -272,8 +272,9 @@ telemetry KeyQueueDepth: U8 id 83
 @ queue overflowed. Should stay at zero in well-behaved scenarios.
 telemetry KeyEventsDropped: U32 id 84
 
-@ Number of telemetry frame-chunk emissions skipped because the
-@ component scheduling fell behind the engine.
+@ Number of engine frames discarded because the screen-wipe melt
+@ playback buffer was full. Should stay at zero in well-behaved
+@ scenarios.
 telemetry FramesDropped: U32 id 85
 
 @ Engine output frame rate in frames per second, measured over a

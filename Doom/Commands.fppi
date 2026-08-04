@@ -3,14 +3,20 @@
 # ----------------------------------------------------------------------
 
 # Commands are sync because the component is passive (no worker
-# thread). Each handler is short - mutex-guarded key enqueue or a
-# single doomgeneric_Create call - and runs on the command-dispatch
-# thread.
+# thread) and run on the command-dispatch thread. Key handlers are a
+# short mutex-guarded enqueue; Start runs engine bring-up inline, may
+# first wait (bounded, ~1 s) for an in-flight rate-group tick, and if
+# another Start/Stop is in flight blocks until it completes (worst
+# case: a full first-Start engine bring-up).
 
-@ Start the wrapped DOOM engine. Calls doomgeneric_Create which loads
-@ the WAD and runs DOOM's initialisation through to the first idle
-@ tick before returning. After this command completes, the rate-group
-@ thread (via the schedIn port) drives doomgeneric_Tick.
+@ Start the wrapped DOOM engine. The first Start calls
+@ doomgeneric_Create, which loads the WAD and runs DOOM's
+@ initialisation through to the first idle tick; a Start after a Stop
+@ resumes the existing engine. After this command completes, the
+@ rate-group thread (via the schedIn port) drives doomgeneric_Tick.
+@ Responds EXECUTION_ERROR if the engine is already running, the
+@ rendezvous times out (StartBusy), or the WAD cannot be opened
+@ (WadUnavailable).
 sync command Start \
   opcode 0
 
@@ -22,9 +28,9 @@ sync command KeyTap(
   opcode 1
 
 @ Press and hold a named DOOM key. The key remains held until a
-@ matching KeyUp is issued or until the engine is stopped. Mirrors a
-@ real keyboard well enough for "walk forward + fire" kinds of inputs
-@ from a command sequence.
+@ matching KeyUp is issued (a Stop/Start cycle preserves engine-side
+@ held-key state). Mirrors a real keyboard well enough for "walk
+@ forward + fire" kinds of inputs from a command sequence.
 sync command KeyDown(
                       key: Doom.DoomKey
                     ) \
@@ -38,7 +44,7 @@ sync command KeyUp(
   opcode 3
 
 @ Press or release a raw DOOM key code, bypassing the named enum.
-@ Use this from the GDS keyboard plugin to forward arbitrary keys
+@ Intended for ground tooling or sequences that need arbitrary keys
 @ (numeric digits, characters, etc.) without growing the enum.
 sync command RawKey(
                      pressed: bool
@@ -47,6 +53,7 @@ sync command RawKey(
   opcode 4
 
 @ Stop the wrapped DOOM engine cooperatively. The rate group will
-@ stop driving Tick and FrameOut telemetry will cease.
+@ stop driving Tick and FrameOut telemetry will cease. May block
+@ behind an in-flight Start (worst case: first-Start bring-up).
 sync command Stop \
   opcode 5

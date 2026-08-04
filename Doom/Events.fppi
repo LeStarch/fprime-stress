@@ -2,8 +2,9 @@
 # Doom component events
 # ----------------------------------------------------------------------
 
-@ Engine started successfully. doomgeneric_Create has returned and the
-@ rate-group thread will begin driving doomgeneric_Tick on the next
+@ Engine started successfully: on the first Start doomgeneric_Create
+@ has returned; on a Start after a Stop the existing engine resumes.
+@ The rate-group thread begins driving doomgeneric_Tick on the next
 @ schedIn pulse.
 event EngineStarted() \
   severity activity high \
@@ -28,3 +29,23 @@ event AlreadyRunning() \
   severity warning low \
   id 3 \
   format "Start ignored - engine already running"
+
+@ A Start command could not rendezvous with the rate-group thread:
+@ a previous tick was still in flight after the bounded wait, or the
+@ wait itself failed.
+event StartBusy() \
+  severity warning low \
+  id 4 \
+  format "Start rejected - could not rendezvous with the rate group"
+
+@ No WAD path was configured, or the configured WAD could not be
+@ opened. Start is rejected so these cases cannot take down the whole
+@ flight process via the engine's internal error handler. The check is
+@ advisory: a WAD that opens but is malformed, or is removed after the
+@ check, can still reach the vendored error handler.
+event WadUnavailable(
+                      wadPath: string size 256 @< The WAD path that failed to open
+                    ) \
+  severity warning high \
+  id 5 \
+  format "Start rejected - cannot open WAD file {}"

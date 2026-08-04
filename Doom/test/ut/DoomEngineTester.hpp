@@ -1,5 +1,5 @@
 // ======================================================================
-// \title  DoomTester.hpp
+// \title  DoomEngineTester.hpp
 // \brief  Unit-test harness for the DoomEngine component.
 //
 // The tests exercise the F Prime-facing surface of the component
@@ -34,6 +34,19 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testOverflowEmitsEvent();
     void testStopCommandResponds();
     void testSchedInWhenEngineOff();
+    void testVirtualSleepAdvancesTicks();
+    void testDrawFrameEmitsFirstDrawAndBuffersMelt();
+    void testSchedInPlaysBackMeltFrames();
+    void testMeltOverflowCountsDroppedFrames();
+    void testForceStartBusyRendezvousTimesOut();
+    void testForceStartWhenAlreadyRunning();
+    void testForceStartResumesAfterStop();
+    void testStopWhileRunning();
+    void testKeyTapAllOrNothing();
+    void testStartRejectsMissingWad();
+    void testStartRejectsUnconfiguredWad();
+    void testStartCommandRejectsWhenRunning();
+    void testHeartbeatSelfHealsStaleRunning();
 
   private:
     // Wiring and init provided by auto-generated helpers.

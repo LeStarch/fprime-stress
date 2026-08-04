@@ -1,6 +1,6 @@
 ####
 # Doom component: wraps the open-source DOOM engine in a single F Prime
-# active component. The upstream DOOM C source (located in doomgeneric/)
+# passive component. The upstream DOOM C source (located in doomgeneric/)
 # is vendored untouched and compiled into a static library, which the
 # component links against. The component itself provides the DG_* hooks
 # the engine expects (DG_Init, DG_DrawFrame, DG_SleepMs, DG_GetTicksMs,
@@ -122,10 +122,14 @@ target_compile_definitions(fprime_stress_doomgeneric
 )
 # Disable warnings that would otherwise fire on the upstream source.
 # We must not modify the upstream code so we silence at the compiler
-# level for this target only.
+# level for this target only. Compile the engine optimized regardless
+# of the project build type: DOOM's level load and screen-wipe setup
+# run inside a single game tic, and unoptimized builds can exceed the
+# 28.57 ms rate-group budget at demo level transitions.
 target_compile_options(fprime_stress_doomgeneric
     PRIVATE
         -w
+        -O2
 )
 
 # ----------------------------------------------------------------------
