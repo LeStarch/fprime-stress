@@ -2,7 +2,7 @@
 
 This deployment vendors the upstream **doomgeneric** project from
 [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) at commit
-`dcb7a8d` under `Doom/doomgeneric/`. doomgeneric in turn is a port of the
+`dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under `Doom/doomgeneric/`. doomgeneric in turn is a port of the
 [Chocolate Doom](https://github.com/chocolate-doom/chocolate-doom)
 engine, which is itself derived from the original id Software DOOM
 source release.

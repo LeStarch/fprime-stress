@@ -2,8 +2,9 @@
 # Doom component events
 # ----------------------------------------------------------------------
 
-@ Engine started successfully. doomgeneric_Create has returned and the
-@ rate-group thread will begin driving doomgeneric_Tick on the next
+@ Engine started successfully: on the first Start doomgeneric_Create
+@ has returned; on a Start after a Stop the existing engine resumes.
+@ The rate-group thread begins driving doomgeneric_Tick on the next
 @ schedIn pulse.
 event EngineStarted() \
   severity activity high \
