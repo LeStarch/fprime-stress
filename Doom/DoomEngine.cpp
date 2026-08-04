@@ -11,8 +11,9 @@
 // Cross-thread communication is limited to the key queue (guarded by
 // m_keyMutex) and the start/stop handoff: forceStart rendezvouses with
 // any in-flight schedIn tick (m_tickInProgress), publishes all engine
-// state, then release-stores m_engineRunning; schedIn_handler
-// acquire-loads it before touching any engine state.
+// state, then stores m_engineRunning; schedIn_handler loads it
+// (seq_cst, ordered against m_tickInProgress) before touching any
+// engine state.
 // ======================================================================
 #include "Doom/DoomEngine.hpp"
 
@@ -28,13 +29,8 @@ extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
 // d_loop.h exports singletics: one game tic per TryRunTics() call.
 #include "Doom/doomgeneric/d_loop.h"
-struct color {
-    unsigned b : 8;
-    unsigned g : 8;
-    unsigned r : 8;
-    unsigned a : 8;
-};
-extern struct color colors[256];
+// i_video.h declares the engine's active palette (struct color colors[256]).
+#include "Doom/doomgeneric/i_video.h"
 }  // extern "C"
 
 namespace Doom {
@@ -167,7 +163,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // observes the engine stopped. See the rendezvous in forceStart().
     TickGuard guard(m_tickInProgress);
     if (!m_engineRunning.load()) {
-        // Engine not started - publish IDLE state heartbeat.
+        // Engine not started - publish OFF state heartbeat.
         this->tlmWrite_State(EngineState::OFF);
         return;
     }
@@ -256,11 +252,11 @@ bool DoomEngine::forceStart() {
     // executing; wait for it to finish before mutating engine state
     // (bounded at ~1 s, far beyond any tick duration).
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if (spin >= 1000U) {
+        if (spin >= RENDEZVOUS_MAX_SPINS) {
             this->log_WARNING_LO_StartBusy();
             return false;
         }
-        const Os::Task::Status delayStatus = Os::Task::delay(Fw::TimeInterval(0, 1000));
+        const Os::Task::Status delayStatus = Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC));
         if (delayStatus != Os::Task::Status::OP_OK) {
             this->log_WARNING_LO_StartBusy();
             return false;

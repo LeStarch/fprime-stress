@@ -9,9 +9,9 @@
 // stop handoff (the command-dispatch thread, and the main thread for
 // autoStart) plus the mutex-guarded key queue: forceStart first waits
 // for any in-flight schedIn tick to finish (m_tickInProgress rendezvous),
-// publishes engine state, then release-stores the atomic
-// m_engineRunning flag, which schedIn_handler acquire-loads before
-// touching any engine state.
+// publishes engine state, then stores the atomic m_engineRunning
+// flag, which schedIn_handler loads (seq_cst, ordered against
+// m_tickInProgress) before touching any engine state.
 //
 // No worker thread is spawned and the tick path never sleeps - the
 // rate group is the sole pacing mechanism (forceStart's bounded
@@ -62,6 +62,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! dropped and counted in FramesDropped (the wipe then cuts to the
     //! live frame early).
     static constexpr FwSizeType MELT_QUEUE_CAPACITY = 80;
+
+    //! Microseconds slept per forceStart rendezvous poll.
+    static constexpr U32 RENDEZVOUS_DELAY_USEC = 1000;
+
+    //! Max rendezvous polls: x RENDEZVOUS_DELAY_USEC = ~1 s bound.
+    static constexpr U32 RENDEZVOUS_MAX_SPINS = 1000;
 
   public:
     explicit DoomEngine(const char* compName);
@@ -192,8 +198,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_framesProduced;
 
     //! True while the engine is being driven by the rate group.
-    //! Release-stored by forceStart/Stop, acquire-loaded by the
-    //! rate-group thread; carries the start-state publication.
+    //! Stored by forceStart/Stop; the rate-group thread reads it with
+    //! a seq_cst load so its ordering against m_tickInProgress holds
+    //! (see the rendezvous in forceStart).
     std::atomic<bool> m_engineRunning;
 
     //! True while schedIn_handler is executing. Set before the handler

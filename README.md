@@ -259,6 +259,12 @@ frame per cycle, so the melt animates on the downlink at its native
 pace. Frames that overflow the buffer are dropped and counted in the
 `FramesDropped` channel.
 
+Known limitation (inherited): the vendored engine's `I_GetTime`
+computes `ms * TICRATE / 1000` in 32-bit arithmetic, so its internal
+clock wraps after roughly 34 hours of continuous running. This is
+upstream engine arithmetic we deliberately do not modify; a Stop/Start
+cycle is not affected (the wrapper clock never steps backwards).
+
 ## Licensing
 
 * Upstream doomgeneric is vendored under `Doom/doomgeneric/` verbatim

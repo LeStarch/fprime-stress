@@ -137,6 +137,19 @@ void DoomEngineTester::testStopCommandResponds() {
     ASSERT_CMD_RESPONSE_SIZE(1);
 }
 
+void DoomEngineTester::testStopWhileRunning() {
+    // Stop on a running engine clears the flag, emits EngineStopped,
+    // publishes OFF, and responds OK.
+    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->sendCmd_Stop(TEST_INSTANCE_ID, 0);
+    ASSERT_FALSE(this->component.m_engineRunning.load());
+    ASSERT_EVENTS_EngineStopped_SIZE(1);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::OFF);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_STOP, 0, Fw::CmdResponse::OK);
+}
+
 void DoomEngineTester::testSchedInWhenEngineOff() {
     this->invoke_to_schedIn(0, 0);
     // No FrameOutNN channel should be emitted when the engine is off.
@@ -166,10 +179,11 @@ void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
     }
     DG_ScreenBuffer = reinterpret_cast<pixel_t*>(buf);
 
-    // First draw of a tick is emitted live.
+    // First draw of a tick is emitted live, with the active palette.
     this->component.platformDrawFrame();
     ASSERT_TLM_FrameOut00_SIZE(1);
     ASSERT_EQ(this->tlmHistory_FrameOut00->at(0).arg.get_frame(), 1U);
+    ASSERT_TLM_PaletteOut_SIZE(1);
 
     // Second draw of the same tick is buffered, not emitted.
     this->component.platformDrawFrame();
@@ -278,6 +292,9 @@ void DoomEngineTester::testForceStartResumesAfterStop() {
     ASSERT_TRUE(this->component.forceStart());
 
     ASSERT_EVENTS_EngineStarted_SIZE(1);
+    ASSERT_TLM_State_SIZE(2);
+    ASSERT_TLM_State(0, Doom::EngineState::STARTING);
+    ASSERT_TLM_State(1, Doom::EngineState::RUNNING);
     ASSERT_TRUE(this->component.m_engineRunning.load());
     ASSERT_EQ(this->component.m_realElapsedUsec, 5000000U);
     ASSERT_EQ(this->component.m_virtualSleepMs, 250U);

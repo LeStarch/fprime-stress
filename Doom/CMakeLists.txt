@@ -1,6 +1,6 @@
 ####
 # Doom component: wraps the open-source DOOM engine in a single F Prime
-# active component. The upstream DOOM C source (located in doomgeneric/)
+# passive component. The upstream DOOM C source (located in doomgeneric/)
 # is vendored untouched and compiled into a static library, which the
 # component links against. The component itself provides the DG_* hooks
 # the engine expects (DG_Init, DG_DrawFrame, DG_SleepMs, DG_GetTicksMs,

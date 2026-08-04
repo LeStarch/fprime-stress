@@ -41,6 +41,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testForceStartBusyRendezvousTimesOut();
     void testForceStartWhenAlreadyRunning();
     void testForceStartResumesAfterStop();
+    void testStopWhileRunning();
 
   private:
     // Wiring and init provided by auto-generated helpers.
