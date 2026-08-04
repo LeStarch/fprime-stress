@@ -77,6 +77,10 @@ void DoomEngineTester::testCommandsEnqueueKeys() {
     ASSERT_EQ(code[4], 0x42);
 
     ASSERT_CMD_RESPONSE_SIZE(4);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_KEYTAP, cmdSeq, Fw::CmdResponse::OK);
+    ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_KEYDOWN, cmdSeq + 1, Fw::CmdResponse::OK);
+    ASSERT_CMD_RESPONSE(2, DoomEngine::OPCODE_KEYUP, cmdSeq + 2, Fw::CmdResponse::OK);
+    ASSERT_CMD_RESPONSE(3, DoomEngine::OPCODE_RAWKEY, cmdSeq + 3, Fw::CmdResponse::OK);
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(0);
 }
 
@@ -133,14 +137,20 @@ void DoomEngineTester::testOverflowEmitsEvent() {
 }
 
 void DoomEngineTester::testStopCommandResponds() {
+    // Stop with the engine already off is a no-op that still responds
+    // OK and publishes the OFF state.
     this->sendCmd_Stop(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_STOP, 0, Fw::CmdResponse::OK);
+    ASSERT_EVENTS_EngineStopped_SIZE(0);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::OFF);
 }
 
 void DoomEngineTester::testStopWhileRunning() {
     // Stop on a running engine clears the flag, emits EngineStopped,
     // publishes OFF, and responds OK.
-    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->component.m_engineRunning.store(true);
     this->sendCmd_Stop(TEST_INSTANCE_ID, 0);
     ASSERT_FALSE(this->component.m_engineRunning.load());
     ASSERT_EVENTS_EngineStopped_SIZE(1);
@@ -210,9 +220,9 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
 
     // Drive schedIn with the engine "running" via the test seam: the
     // melt branch plays back the buffered frame without ticking DOOM.
-    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->component.m_engineRunning.store(true);
     this->invoke_to_schedIn(0, 0);
-    this->component.m_engineRunning.store(false, std::memory_order_release);
+    this->component.m_engineRunning.store(false);
 
     ASSERT_TLM_FrameOut00_SIZE(2);
     // The palette is re-emitted with every frame, replays included.
@@ -260,9 +270,9 @@ void DoomEngineTester::testMeltOverflowCountsDroppedFrames() {
     ASSERT_EQ(this->component.m_framesDropped, 2U);
 
     // schedIn publishes the drop count on the FramesDropped channel.
-    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->component.m_engineRunning.store(true);
     this->invoke_to_schedIn(0, 0);
-    this->component.m_engineRunning.store(false, std::memory_order_release);
+    this->component.m_engineRunning.store(false);
     ASSERT_TLM_FramesDropped_SIZE(1);
     ASSERT_TLM_FramesDropped(0, 2U);
 
@@ -296,6 +306,26 @@ void DoomEngineTester::testKeyTapAllOrNothing() {
     ASSERT_EQ(this->component.m_keyQueueCount, cap - 1);
     ASSERT_EQ(this->component.m_keysDropped, 2U);
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(1);
+
+    // The KeyTap command reports the same overflow as EXECUTION_ERROR.
+    this->sendCmd_KeyTap(TEST_INSTANCE_ID, 0, use_key);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_KEYTAP, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EQ(this->component.m_keysDropped, 4U);
+}
+
+void DoomEngineTester::testStartRejectsMissingWad() {
+    // A missing WAD must reject the Start (EXECUTION_ERROR + FAILED)
+    // instead of letting the vendored I_Error exit the process.
+    this->component.setWadPath("/nonexistent/doom1.wad");
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_WadUnavailable_SIZE(1);
+    ASSERT_EVENTS_EngineStarted_SIZE(0);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+    ASSERT_FALSE(this->component.m_engineRunning.load());
 }
 
 void DoomEngineTester::testForceStartResumesAfterStop() {
@@ -321,18 +351,18 @@ void DoomEngineTester::testForceStartResumesAfterStop() {
     ASSERT_EQ(this->component.m_meltCount, 0U);
     ASSERT_EQ(this->component.m_drawsThisTick, 0U);
 
-    this->component.m_engineRunning.store(false, std::memory_order_release);
+    this->component.m_engineRunning.store(false);
 }
 
 void DoomEngineTester::testForceStartWhenAlreadyRunning() {
     // A Start while the engine runs must fail fast with AlreadyRunning
     // and leave the running state untouched.
-    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->component.m_engineRunning.store(true);
     ASSERT_FALSE(this->component.forceStart());
     ASSERT_EVENTS_AlreadyRunning_SIZE(1);
     ASSERT_EVENTS_StartBusy_SIZE(0);
     ASSERT_TRUE(this->component.m_engineRunning.load());
-    this->component.m_engineRunning.store(false, std::memory_order_release);
+    this->component.m_engineRunning.store(false);
 }
 
 }  // namespace Doom

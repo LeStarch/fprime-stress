@@ -21,6 +21,7 @@
 
 #include <Fw/Types/Assert.hpp>
 #include <Fw/Time/TimeInterval.hpp>
+#include <Os/File.hpp>
 #include <Os/Task.hpp>
 
 #include <cstring>
@@ -267,6 +268,18 @@ bool DoomEngine::forceStart() {
             return false;
         }
     }
+    if (!m_engineCreated && (m_wadPath[0] != '\0')) {
+        // Pre-validate the WAD: the vendored engine calls exit() via
+        // I_Error on a missing WAD, which would take down the whole
+        // flight process. Reject the Start instead.
+        Os::File wad;
+        if (wad.open(m_wadPath, Os::File::OPEN_READ) != Os::File::OP_OK) {
+            this->log_WARNING_HI_WadUnavailable(Fw::LogStringArg(m_wadPath));
+            this->tlmWrite_State(EngineState::FAILED);
+            return false;
+        }
+        wad.close();
+    }
     this->tlmWrite_State(EngineState::STARTING);
 
     // (Re)base the reference time used by DG_GetTicksMs so time spent
@@ -419,12 +432,12 @@ bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
 }
 
 bool DoomEngine::enqueueKey(bool pressed, U8 code) {
-    const U16 entry = static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
+    const U16 entry = packKeyEntry(pressed, code);
     return this->enqueueKeyEvents(&entry, 1);
 }
 
 bool DoomEngine::enqueueKeyTap(U8 code) {
-    const U16 entries[2] = {static_cast<U16>((1U << 8) | static_cast<U16>(code)), static_cast<U16>(code)};
+    const U16 entries[2] = {packKeyEntry(true, code), packKeyEntry(false, code)};
     return this->enqueueKeyEvents(entries, 2);
 }
 
@@ -521,7 +534,8 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
 
     // The palette (768 B, negligible vs 256 KB frames) is emitted
     // every frame rather than on change, so the ground converges on
-    // the active palette regardless of when it attached.
+    // the active palette regardless of when it attached. Melt replays
+    // use the live palette (palette swaps mid-wipe are not preserved).
     Doom::Palette pal;
     pal.set_generation(m_paletteGeneration);
     U8* const dest = pal.get_rgb();

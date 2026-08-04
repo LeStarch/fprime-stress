@@ -43,6 +43,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testForceStartResumesAfterStop();
     void testStopWhileRunning();
     void testKeyTapAllOrNothing();
+    void testStartRejectsMissingWad();
 
   private:
     // Wiring and init provided by auto-generated helpers.

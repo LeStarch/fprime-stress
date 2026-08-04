@@ -168,6 +168,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! rate-window counters and overflow reporting under m_keyMutex.
     bool enqueueKeyEvents(const U16* entries, FwSizeType count);
 
+    //! Pack one key event into the queue's wire format: bit 8 is the
+    //! pressed flag, bits 0-7 the key code (unpacked by platformGetKey).
+    static constexpr U16 packKeyEntry(bool pressed, U8 code) {
+        return static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
+    }
+
     //! Emit one full frame as FrameOut chunk telemetry plus the active
     //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
@@ -255,8 +261,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_keysDropped;
 
     //! Per-window counters for the input-rate telemetry. Incremented
-    //! under m_keyMutex by every enqueueKey() call (command and
-    //! parallel-port paths both go through enqueueKey).
+    //! under m_keyMutex by enqueueKeyEvents() (all command and
+    //! parallel-port paths funnel through it).
     U32 m_inputEventsThisWindow;
     U32 m_inputBytesThisWindow;
 

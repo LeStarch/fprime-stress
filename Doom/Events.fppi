@@ -29,9 +29,20 @@ event AlreadyRunning() \
   id 3 \
   format "Start ignored - engine already running"
 
-@ A Start command could not rendezvous with the rate-group thread: a
-@ previous tick was still in flight after the bounded wait.
+@ A Start command could not rendezvous with the rate-group thread:
+@ a previous tick was still in flight after the bounded wait, or the
+@ wait itself failed.
 event StartBusy() \
   severity warning low \
   id 4 \
-  format "Start rejected - a rate-group tick is still in flight"
+  format "Start rejected - could not rendezvous with the rate group"
+
+@ The configured WAD file could not be opened. Start is rejected so a
+@ missing or unreadable WAD cannot take down the whole flight process
+@ via the engine's internal error handler.
+event WadUnavailable(
+                      wadPath: string size 256 @< The WAD path that failed to open
+                    ) \
+  severity warning high \
+  id 5 \
+  format "Start rejected - cannot open WAD file {}"

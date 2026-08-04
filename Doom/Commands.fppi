@@ -14,6 +14,9 @@
 @ initialisation through to the first idle tick; a Start after a Stop
 @ resumes the existing engine. After this command completes, the
 @ rate-group thread (via the schedIn port) drives doomgeneric_Tick.
+@ Responds EXECUTION_ERROR if the engine is already running, the
+@ rendezvous times out (StartBusy), or the WAD cannot be opened
+@ (WadUnavailable).
 sync command Start \
   opcode 0
 
@@ -25,9 +28,9 @@ sync command KeyTap(
   opcode 1
 
 @ Press and hold a named DOOM key. The key remains held until a
-@ matching KeyUp is issued or until the engine is stopped. Mirrors a
-@ real keyboard well enough for "walk forward + fire" kinds of inputs
-@ from a command sequence.
+@ matching KeyUp is issued (a Stop/Start cycle preserves engine-side
+@ held-key state). Mirrors a real keyboard well enough for "walk
+@ forward + fire" kinds of inputs from a command sequence.
 sync command KeyDown(
                       key: Doom.DoomKey
                     ) \

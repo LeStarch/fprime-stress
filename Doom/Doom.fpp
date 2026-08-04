@@ -68,10 +68,10 @@ module Doom {
   # ----------------------------------------------------------------------
 
   enum EngineState {
-    OFF       = 0  @< Engine has not been started yet.
+    OFF       = 0  @< Engine not running: never started, or stopped (resumable).
     STARTING  = 1  @< Engine bring-up is running in the Start handler.
     RUNNING   = 2  @< Engine is ticking and producing frames.
-    FAILED    = 3  @< Reserved: engine failed to start (not currently set).
+    FAILED    = 3  @< Engine failed to start (e.g. WAD unavailable).
   } default OFF
 
   # ----------------------------------------------------------------------
