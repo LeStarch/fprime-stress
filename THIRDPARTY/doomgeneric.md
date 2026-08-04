@@ -1,8 +1,8 @@
 # doomgeneric (third-party)
 
 This deployment vendors the upstream **doomgeneric** project from
-[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) under
-`Doom/doomgeneric/`. doomgeneric in turn is a port of the
+[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) at commit
+`dcb7a8d` under `Doom/doomgeneric/`. doomgeneric in turn is a port of the
 [Chocolate Doom](https://github.com/chocolate-doom/chocolate-doom)
 engine, which is itself derived from the original id Software DOOM
 source release.

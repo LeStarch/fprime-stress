@@ -16,8 +16,9 @@
 // No worker thread is spawned and the tick path never sleeps - the
 // rate group is the sole pacing mechanism (forceStart's bounded
 // rendezvous wait runs on the caller's thread, never the rate-group
-// thread). This makes execution deterministic and avoids any need for
-// OS-specific scheduling primitives beyond the OSAL mutex.
+// thread). This makes execution deterministic: cross-thread state is
+// limited to the OSAL mutexes, two std::atomic flags, and the bounded
+// Os::Task::delay polling in forceStart's rendezvous.
 // ======================================================================
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
@@ -78,7 +79,8 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Set the path to the IWAD that should be passed to
     //! doomgeneric_Create when the engine starts. Must be called before
-    //! the Start command is dispatched.
+    //! the Start command is dispatched. Asserts if the path does not
+    //! fit in WAD_PATH_MAX (rejects rather than truncates).
     void setWadPath(const char* wadPath);
 
     //! Accessor used by the extern "C" DG_* platform glue to reach back
@@ -162,6 +164,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! neither is, so an overflow cannot leave a key stuck down.
     bool enqueueKeyTap(U8 code);
 
+    //! Shared enqueue core: queues all entries or none, updating the
+    //! rate-window counters and overflow reporting under m_keyMutex.
+    bool enqueueKeyEvents(const U16* entries, FwSizeType count);
+
     //! Emit one full frame as FrameOut chunk telemetry plus the active
     //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
@@ -205,9 +211,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_framesProduced;
 
     //! True while the engine is being driven by the rate group.
-    //! Stored by forceStart/Stop; the rate-group thread reads it with
-    //! a seq_cst load so its ordering against m_tickInProgress holds
-    //! (see the rendezvous in forceStart).
+    //! All loads/stores are seq_cst so the handoff with
+    //! m_tickInProgress shares one total order (see forceStart).
     std::atomic<bool> m_engineRunning;
 
     //! True while schedIn_handler is executing. Set before the handler

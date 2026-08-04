@@ -248,7 +248,7 @@ bool DoomEngine::forceStart() {
     // command): only one caller may run the check-rendezvous-create
     // sequence at a time.
     Os::ScopeLock startLock(m_startMutex);
-    if (m_engineRunning.load(std::memory_order_acquire)) {
+    if (m_engineRunning.load()) {
         this->log_WARNING_LO_AlreadyRunning();
         return false;
     }
@@ -308,8 +308,9 @@ bool DoomEngine::forceStart() {
         m_engineCreated = true;
     }
 
-    // Release pairs with the seq_cst load in schedIn_handler.
-    m_engineRunning.store(true, std::memory_order_release);
+    // seq_cst store, matching schedIn_handler's load: all handoff
+    // operations share the single seq_cst total order.
+    m_engineRunning.store(true);
     this->log_ACTIVITY_HI_EngineStarted();
     this->tlmWrite_State(EngineState::RUNNING);
     return true;
@@ -327,8 +328,8 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     // Serialize against an in-flight forceStart (e.g. autoStart) so a
     // Stop is never silently overwritten by a concurrent start.
     Os::ScopeLock startLock(m_startMutex);
-    if (m_engineRunning.load(std::memory_order_acquire)) {
-        m_engineRunning.store(false, std::memory_order_release);
+    if (m_engineRunning.load()) {
+        m_engineRunning.store(false);
         this->log_ACTIVITY_HI_EngineStopped();
     }
     this->tlmWrite_State(EngineState::OFF);
@@ -384,24 +385,27 @@ void DoomEngine::rawKeyIn_handler(FwIndexType /*portNum*/, bool pressed, U8 code
 // Key queue helpers
 // ----------------------------------------------------------------------
 
-bool DoomEngine::enqueueKey(bool pressed, U8 code) {
+bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
     bool ok = false;
     bool emitOverflow = false;
     m_keyMutex.lock();
     // Every received event counts toward the input rate windows,
     // regardless of whether the queue had room. 2 bytes per event
     // (pressed flag byte + key code byte) - documented in Telemetry.fppi.
-    m_inputEventsThisWindow++;
-    m_inputBytesThisWindow += 2U;
-    if (m_keyQueueCount < KEY_QUEUE_CAPACITY) {
-        const U16 entry = static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
-        m_keyQueue[m_keyQueueTail] = entry;
-        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
-        m_keyQueueCount++;
+    m_inputEventsThisWindow += static_cast<U32>(count);
+    m_inputBytesThisWindow += static_cast<U32>(count) * 2U;
+    // All-or-nothing: either every entry fits or none is queued (a
+    // partial down/up tap would leave the key stuck down).
+    if ((m_keyQueueCount + count) <= KEY_QUEUE_CAPACITY) {
+        for (FwSizeType i = 0; i < count; i++) {
+            m_keyQueue[m_keyQueueTail] = entries[i];
+            m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
+            m_keyQueueCount++;
+        }
         m_overflowReported = false;
         ok = true;
     } else {
-        m_keysDropped++;
+        m_keysDropped += static_cast<U32>(count);
         if (!m_overflowReported) {
             m_overflowReported = true;
             emitOverflow = true;
@@ -414,36 +418,14 @@ bool DoomEngine::enqueueKey(bool pressed, U8 code) {
     return ok;
 }
 
+bool DoomEngine::enqueueKey(bool pressed, U8 code) {
+    const U16 entry = static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
+    return this->enqueueKeyEvents(&entry, 1);
+}
+
 bool DoomEngine::enqueueKeyTap(U8 code) {
-    bool ok = false;
-    bool emitOverflow = false;
-    m_keyMutex.lock();
-    m_inputEventsThisWindow += 2U;
-    m_inputBytesThisWindow += 4U;
-    // All-or-nothing: require room for both the down and up events so
-    // an overflow cannot leave the key stuck down.
-    if ((m_keyQueueCount + 2U) <= KEY_QUEUE_CAPACITY) {
-        const U16 down = static_cast<U16>((1U << 8) | static_cast<U16>(code));
-        const U16 up = static_cast<U16>(code);
-        m_keyQueue[m_keyQueueTail] = down;
-        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
-        m_keyQueue[m_keyQueueTail] = up;
-        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
-        m_keyQueueCount += 2U;
-        m_overflowReported = false;
-        ok = true;
-    } else {
-        m_keysDropped += 2U;
-        if (!m_overflowReported) {
-            m_overflowReported = true;
-            emitOverflow = true;
-        }
-    }
-    m_keyMutex.unLock();
-    if (emitOverflow) {
-        this->log_WARNING_LO_KeyQueueOverflow();
-    }
-    return ok;
+    const U16 entries[2] = {static_cast<U16>((1U << 8) | static_cast<U16>(code)), static_cast<U16>(code)};
+    return this->enqueueKeyEvents(entries, 2);
 }
 
 bool DoomEngine::platformGetKey(bool& pressed, U8& code) {
@@ -622,10 +604,10 @@ int DoomEngine::buildEngineArgv(const char** argv, int maxArgv) {
         (void)::memcpy(m_argvStorage[argc], iwadFlag, sizeof(iwadFlag));
         argv[argc] = m_argvStorage[argc];
         argc++;
+        // m_wadPath is NUL-terminated and length-checked by setWadPath.
         const FwSizeType len = static_cast<FwSizeType>(::strlen(m_wadPath));
-        const FwSizeType copy = (len < (WAD_PATH_MAX - 1U)) ? len : (WAD_PATH_MAX - 1U);
-        (void)::memcpy(m_argvStorage[argc], m_wadPath, copy);
-        m_argvStorage[argc][copy] = '\0';
+        (void)::memcpy(m_argvStorage[argc], m_wadPath, len);
+        m_argvStorage[argc][len] = '\0';
         argv[argc] = m_argvStorage[argc];
         argc++;
     }
