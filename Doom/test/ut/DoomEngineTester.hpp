@@ -40,6 +40,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testMeltOverflowCountsDroppedFrames();
     void testForceStartBusyRendezvousTimesOut();
     void testForceStartWhenAlreadyRunning();
+    void testForceStartResumesAfterStop();
 
   private:
     // Wiring and init provided by auto-generated helpers.

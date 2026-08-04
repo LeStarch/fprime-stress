@@ -225,7 +225,8 @@ LICENSE                         root license (GPLv2; see Licensing)
 
 ## Memory & threading
 
-Every working buffer (frame buffer, palette, key queue, argv) is a
+Every working buffer (frame buffer, palette, key queue, argv, and the
+~20.5 MB screen-wipe melt ring of `MELT_QUEUE_CAPACITY` frames) is a
 fixed-size member of the `DoomEngine` instance. Nothing in the F Prime
 glue calls `malloc` after init. doomgeneric's own `Z_Init` arena is
 allocated exactly once from inside upstream code we deliberately do

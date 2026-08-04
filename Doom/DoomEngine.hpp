@@ -3,11 +3,12 @@
 // \brief  F Prime component that wraps the open-source DOOM engine.
 //
 // The engine is driven entirely from the rate-group thread that calls
-// the schedIn port: one Tick of doomgeneric is executed per call. The
-// only other thread that ever touches component state is the command-
-// dispatch thread, which writes into the mutex-guarded key queue and
-// performs the start/stop handoff: forceStart first waits for any
-// in-flight schedIn tick to finish (m_tickInProgress rendezvous),
+// the schedIn port: each call runs one doomgeneric Tick, or replays
+// one buffered melt frame if a screen wipe is pending. Component
+// state is otherwise touched only by threads performing the start/
+// stop handoff (the command-dispatch thread, and the main thread for
+// autoStart) plus the mutex-guarded key queue: forceStart first waits
+// for any in-flight schedIn tick to finish (m_tickInProgress rendezvous),
 // publishes engine state, then release-stores the atomic
 // m_engineRunning flag, which schedIn_handler acquire-loads before
 // touching any engine state.
@@ -72,7 +73,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     void setWadPath(const char* wadPath);
 
     //! Accessor used by the extern "C" DG_* platform glue to reach back
-    //! into the active component instance. There is exactly one Doom
+    //! into the component instance. There is exactly one Doom
     //! component instance per deployment by design.
     static DoomEngine* getInstance();
 
@@ -85,7 +86,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     void platformInit();
 
     //! Called from DG_DrawFrame at the end of each rendered DOOM frame.
-    //! Emits FrameChunk telemetry and (if changed) the active palette.
+    //! The first draw of a tick is emitted as FrameChunk telemetry plus
+    //! the active palette; subsequent draws in the same tick (a screen
+    //! wipe) are buffered into the melt ring, or dropped and counted in
+    //! FramesDropped when the ring is full.
     void platformDrawFrame();
 
     //! Called from DG_SleepMs. Advances virtual time rather than
@@ -187,8 +191,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Total frames produced by the engine.
     U32 m_framesProduced;
 
-    //! True once Start has fired and doomgeneric_Create has returned.
-    //! Release-stored by the command thread, acquire-loaded by the
+    //! True while the engine is being driven by the rate group.
+    //! Release-stored by forceStart/Stop, acquire-loaded by the
     //! rate-group thread; carries the start-state publication.
     std::atomic<bool> m_engineRunning;
 
@@ -243,7 +247,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     // input rates harvested from m_inputEventsThisWindow etc.
     // ------------------------------------------------------------------
 
-    //! Total scheduler ticks since engine start.
+    //! Scheduler ticks inside the current rate window.
     U32 m_schedTicks;
     //! Frames produced inside the current rate window.
     U32 m_framesThisWindow;

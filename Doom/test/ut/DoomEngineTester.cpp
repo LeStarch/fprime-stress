@@ -145,6 +145,9 @@ void DoomEngineTester::testSchedInWhenEngineOff() {
     ASSERT_TLM_FrameOut00_SIZE(0);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_EVENTS_EngineStopped_SIZE(0);
+    // The handler still publishes the OFF-state heartbeat.
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::OFF);
 }
 
 void DoomEngineTester::testVirtualSleepAdvancesTicks() {
@@ -259,6 +262,29 @@ void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
     ASSERT_EVENTS_StartBusy_SIZE(1);
     ASSERT_EVENTS_AlreadyRunning_SIZE(0);
     ASSERT_FALSE(this->component.m_engineRunning.load());
+}
+
+void DoomEngineTester::testForceStartResumesAfterStop() {
+    // A Start after a Stop must resume the existing engine: no second
+    // doomgeneric_Create, elapsed-time accumulators preserved (the
+    // vendored timer's cached basetime must never see the clock step
+    // backwards), melt/draw pacing state discarded.
+    this->component.m_engineCreated = true;
+    this->component.m_realElapsedUsec = 5000000U;
+    this->component.m_virtualSleepMs = 250U;
+    this->component.m_meltCount = 3U;
+    this->component.m_drawsThisTick = 2U;
+
+    ASSERT_TRUE(this->component.forceStart());
+
+    ASSERT_EVENTS_EngineStarted_SIZE(1);
+    ASSERT_TRUE(this->component.m_engineRunning.load());
+    ASSERT_EQ(this->component.m_realElapsedUsec, 5000000U);
+    ASSERT_EQ(this->component.m_virtualSleepMs, 250U);
+    ASSERT_EQ(this->component.m_meltCount, 0U);
+    ASSERT_EQ(this->component.m_drawsThisTick, 0U);
+
+    this->component.m_engineRunning.store(false, std::memory_order_release);
 }
 
 void DoomEngineTester::testForceStartWhenAlreadyRunning() {

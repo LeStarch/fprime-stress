@@ -4,8 +4,10 @@
 
 # Commands are sync because the component is passive (no worker
 # thread) and run on the command-dispatch thread. Key handlers are a
-# short mutex-guarded enqueue; Start runs engine bring-up inline and
-# may first wait (bounded, ~1 s) for an in-flight rate-group tick.
+# short mutex-guarded enqueue; Start runs engine bring-up inline, may
+# first wait (bounded, ~1 s) for an in-flight rate-group tick, and if
+# another Start/Stop is in flight blocks until it completes (worst
+# case: a full first-Start engine bring-up).
 
 @ Start the wrapped DOOM engine. The first Start calls
 @ doomgeneric_Create, which loads the WAD and runs DOOM's

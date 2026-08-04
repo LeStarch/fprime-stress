@@ -53,8 +53,9 @@ module Doom {
     pixels: [Doom.FRAME_CHUNK_BYTES] U8
   }
 
-  @ The active DOOM palette as a flat RGB byte array. Emitted whenever
-  @ the engine changes the palette (level start, damage tint, etc.).
+  @ The active DOOM palette as a flat RGB byte array. Emitted with
+  @ every frame so the ground converges on the active palette
+  @ regardless of when it attached.
   struct Palette {
     @ Monotonically increasing palette generation counter.
     generation: U32
@@ -156,7 +157,8 @@ module Doom {
     # Scheduled ports
     # ------------------------------------------------------------------
 
-    @ Periodic scheduled call driving one doomgeneric_Tick per pulse.
+    @ Periodic scheduled call driving one doomgeneric_Tick per pulse
+    @ (or one buffered melt-frame replay while a screen wipe drains).
     @ Declared sync so a tick that overruns its rate-group budget
     @ trips Svc.ActiveRateGroup's cycle-slip telemetry directly,
     @ giving hard evidence of an over-budget engine instead of

@@ -2,8 +2,9 @@
 // \title  DoomEngine.cpp
 // \brief  F Prime DOOM engine wrapper - implementation.
 //
-// The engine is driven from a Svc.Sched input port. The schedIn handler
-// invokes doomgeneric_Tick(); upstream doomgeneric calls back into the
+// The engine is driven from a Svc.Sched input port. Each schedIn call
+// invokes doomgeneric_Tick(), or replays one buffered melt frame while
+// a screen wipe drains; upstream doomgeneric calls back into the
 // extern "C" DG_* hooks at the bottom of this file, which delegate to
 // the singleton DoomEngine instance.
 //
@@ -320,6 +321,9 @@ void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
 void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     // Cooperative stop - the rate group will simply stop calling Tick.
     // DOOM has no clean shutdown path, so we just stop driving it.
+    // Serialize against an in-flight forceStart (e.g. autoStart) so a
+    // Stop is never silently overwritten by a concurrent start.
+    Os::ScopeLock startLock(m_startMutex);
     if (m_engineRunning.load(std::memory_order_acquire)) {
         m_engineRunning.store(false, std::memory_order_release);
         this->log_ACTIVITY_HI_EngineStopped();
