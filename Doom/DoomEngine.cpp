@@ -23,6 +23,10 @@
 
 extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
+// One game tic per TryRunTics() call (d_loop.c). Upstream uses this for
+// -timedemo; here it decouples game-logic advancement from the wall
+// clock entirely so the rate group is the sole pacing mechanism.
+extern unsigned int singletics;
 struct color {
     unsigned b : 8;
     unsigned g : 8;
@@ -101,7 +105,11 @@ DoomEngine::DoomEngine(const char* compName)
       m_inputBytesThisWindow(0),
       m_schedTicks(0),
       m_framesThisWindow(0),
-      m_frameBytesThisWindow(0) {
+      m_frameBytesThisWindow(0),
+      m_virtualSleepMs(0),
+      m_drawsThisTick(0),
+      m_meltHead(0),
+      m_meltCount(0) {
     FW_ASSERT(s_instance == nullptr);
     s_instance = this;
 
@@ -138,9 +146,21 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         this->tlmWrite_State(EngineState::OFF);
         return;
     }
-    // Drive one DOOM frame of game logic. upstream doomgeneric will
-    // call back into DG_GetKey / DG_DrawFrame on this same thread.
-    doomgeneric_Tick();
+    if (m_meltCount > 0U) {
+        // A screen-wipe melt was captured on an earlier tick (see
+        // platformDrawFrame). Play it back one frame per cycle so the
+        // animation is visible at its native 35 Hz pace, holding the
+        // game paused meanwhile — the same thing the upstream engine
+        // does while its blocking wipe loop runs.
+        this->emitFrame(m_meltFrames[m_meltHead], m_meltFrameNumbers[m_meltHead]);
+        m_meltHead = (m_meltHead + 1U) % MELT_QUEUE_CAPACITY;
+        m_meltCount--;
+    } else {
+        // Drive one DOOM frame of game logic. upstream doomgeneric will
+        // call back into DG_GetKey / DG_DrawFrame on this same thread.
+        m_drawsThisTick = 0U;
+        doomgeneric_Tick();
+    }
 
     // Refresh derived telemetry. FrameOut / PaletteOut are emitted from
     // DG_DrawFrame which runs inside Tick above.
@@ -213,6 +233,16 @@ bool DoomEngine::forceStart() {
     const int argc = this->buildEngineArgv(m_argvPointers,
                                            static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
     doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
+
+    // Run the engine in singletics mode: exactly one game tic is built
+    // and run per doomgeneric_Tick() call. This removes every wall-
+    // clock dependency from TryRunTics — no catch-up tic bursts after
+    // stalls, and no busy-wait until the next 35 Hz tic boundary when
+    // the rate group fires marginally before DOOM's own clock rolls
+    // over (the beat between the two clocks otherwise blocks the
+    // rate-group thread for up to a full tic period, slipping the
+    // following cycle).
+    singletics = 1U;
 
     m_engineRunning = true;
     this->log_ACTIVITY_HI_EngineStarted();
@@ -354,6 +384,30 @@ void DoomEngine::platformDrawFrame() {
 
     m_framesProduced++;
     m_framesThisWindow++;
+    m_drawsThisTick++;
+
+    // The screen-wipe melt in D_Display draws its whole animation
+    // (dozens of frames) inside a single doomgeneric_Tick call — its
+    // sleep/poll loop completes against virtual time (see
+    // platformSleepMs). Emitting full FrameOut telemetry for every
+    // melt step in one cycle would burn tens of milliseconds and slip
+    // the rate group, so the first draw of a tick is emitted live and
+    // the remaining draws are captured into the melt buffer, which
+    // schedIn_handler plays back one frame per cycle.
+    if (m_drawsThisTick > 1U) {
+        if (m_meltCount < MELT_QUEUE_CAPACITY) {
+            const FwSizeType slot = (m_meltHead + m_meltCount) % MELT_QUEUE_CAPACITY;
+            (void)::memcpy(m_meltFrames[slot], src, FRAME_BYTES);
+            m_meltFrameNumbers[slot] = m_framesProduced;
+            m_meltCount++;
+        }
+        return;
+    }
+
+    this->emitFrame(src, m_framesProduced);
+}
+
+void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
     this->capturePaletteIfChanged();
 
     // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
@@ -369,7 +423,7 @@ void DoomEngine::platformDrawFrame() {
     Doom::FrameChunk chunk;
     chunk.set_width(FRAME_WIDTH);
     chunk.set_rowCount(ROWS_PER_CHUNK);
-    chunk.set_frame(m_framesProduced);
+    chunk.set_frame(frameNumber);
     U8* const chunkPixels = chunk.get_pixels();
 
     // Each iteration writes its chunk to a distinct telemetry channel id
@@ -429,26 +483,32 @@ void DoomEngine::capturePaletteIfChanged() {
     }
 }
 
-void DoomEngine::platformSleepMs(U32 ms) const {
-    // Intentional no-op: rate group provides pacing.
-    (void)ms;
+void DoomEngine::platformSleepMs(U32 ms) {
+    // Never block the rate-group thread. Instead treat a sleep request
+    // as virtual time passing: advance the clock DG_GetTicksMs reports
+    // by the requested amount. The only in-engine sleep loops (the
+    // screen-wipe melt in D_Display, and TryRunTics' wait loop, which
+    // singletics mode never reaches) poll I_GetTime between I_Sleep(1)
+    // calls, so advancing virtual time lets them run to completion
+    // immediately instead of stalling the 35 Hz cycle.
+    m_virtualSleepMs += ms;
 }
 
 U32 DoomEngine::platformGetTicksMs() {
     if (!m_engineStartValid) {
-        return 0U;
+        return m_virtualSleepMs;
     }
     Os::RawTime current;
     const Os::RawTime::Status nowStatus = current.now();
     if (nowStatus != Os::RawTime::Status::OP_OK) {
-        return 0U;
+        return m_virtualSleepMs;
     }
     U32 deltaUsec = 0U;
     const Os::RawTime::Status diffStatus = current.getDiffUsec(m_engineStart, deltaUsec);
     if (diffStatus != Os::RawTime::Status::OP_OK) {
-        return 0U;
+        return m_virtualSleepMs;
     }
-    return deltaUsec / 1000U;
+    return (deltaUsec / 1000U) + m_virtualSleepMs;
 }
 
 void DoomEngine::platformSetTitle(const char* title) {
