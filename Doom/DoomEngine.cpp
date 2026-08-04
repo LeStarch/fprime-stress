@@ -107,7 +107,9 @@ DoomEngine::DoomEngine(const char* compName)
       m_framesThisWindow(0),
       m_frameBytesThisWindow(0),
       m_virtualSleepMs(0),
-      m_drawsThisTick(0) {
+      m_drawsThisTick(0),
+      m_meltHead(0),
+      m_meltCount(0) {
     FW_ASSERT(s_instance == nullptr);
     s_instance = this;
 
@@ -144,10 +146,21 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         this->tlmWrite_State(EngineState::OFF);
         return;
     }
-    // Drive one DOOM frame of game logic. upstream doomgeneric will
-    // call back into DG_GetKey / DG_DrawFrame on this same thread.
-    m_drawsThisTick = 0U;
-    doomgeneric_Tick();
+    if (m_meltCount > 0U) {
+        // A screen-wipe melt was captured on an earlier tick (see
+        // platformDrawFrame). Play it back one frame per cycle so the
+        // animation is visible at its native 35 Hz pace, holding the
+        // game paused meanwhile — the same thing the upstream engine
+        // does while its blocking wipe loop runs.
+        this->emitFrame(m_meltFrames[m_meltHead], m_meltFrameNumbers[m_meltHead]);
+        m_meltHead = (m_meltHead + 1U) % MELT_QUEUE_CAPACITY;
+        m_meltCount--;
+    } else {
+        // Drive one DOOM frame of game logic. upstream doomgeneric will
+        // call back into DG_GetKey / DG_DrawFrame on this same thread.
+        m_drawsThisTick = 0U;
+        doomgeneric_Tick();
+    }
 
     // Refresh derived telemetry. FrameOut / PaletteOut are emitted from
     // DG_DrawFrame which runs inside Tick above.
@@ -374,16 +387,27 @@ void DoomEngine::platformDrawFrame() {
     m_drawsThisTick++;
 
     // The screen-wipe melt in D_Display draws its whole animation
-    // (~30 frames) inside a single doomgeneric_Tick call. Emitting
-    // full FrameOut telemetry for each would burn tens of
-    // milliseconds of rate-group time on frames TlmChan collapses to
-    // one sample anyway, slipping the following cycles. Emit only the
-    // first frame of any given tick; the post-wipe frame arrives on
-    // the next 35 Hz cycle.
+    // (dozens of frames) inside a single doomgeneric_Tick call — its
+    // sleep/poll loop completes against virtual time (see
+    // platformSleepMs). Emitting full FrameOut telemetry for every
+    // melt step in one cycle would burn tens of milliseconds and slip
+    // the rate group, so the first draw of a tick is emitted live and
+    // the remaining draws are captured into the melt buffer, which
+    // schedIn_handler plays back one frame per cycle.
     if (m_drawsThisTick > 1U) {
+        if (m_meltCount < MELT_QUEUE_CAPACITY) {
+            const FwSizeType slot = (m_meltHead + m_meltCount) % MELT_QUEUE_CAPACITY;
+            (void)::memcpy(m_meltFrames[slot], src, FRAME_BYTES);
+            m_meltFrameNumbers[slot] = m_framesProduced;
+            m_meltCount++;
+        }
         return;
     }
 
+    this->emitFrame(src, m_framesProduced);
+}
+
+void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
     this->capturePaletteIfChanged();
 
     // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
@@ -399,7 +423,7 @@ void DoomEngine::platformDrawFrame() {
     Doom::FrameChunk chunk;
     chunk.set_width(FRAME_WIDTH);
     chunk.set_rowCount(ROWS_PER_CHUNK);
-    chunk.set_frame(m_framesProduced);
+    chunk.set_frame(frameNumber);
     U8* const chunkPixels = chunk.get_pixels();
 
     // Each iteration writes its chunk to a distinct telemetry channel id

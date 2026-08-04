@@ -43,6 +43,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
+    //! Capacity (in frames) of the screen-wipe melt playback buffer.
+    //! The melt animation spans roughly 40-70 engine draws; 128 gives
+    //! comfortable margin. Overflowing frames are dropped (the wipe
+    //! then cuts to the live frame early).
+    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 128;
+
   public:
     explicit DoomEngine(const char* compName);
     ~DoomEngine() override;
@@ -122,6 +128,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Enqueue one (pressed, code) key event under m_keyMutex. Returns
     //! true on success, false if the queue was full.
     bool enqueueKey(bool pressed, U8 code);
+
+    //! Emit one full frame as FrameOut chunk telemetry plus the active
+    //! palette. src points at FRAME_BYTES of 8-bit palette indices;
+    //! frameNumber is stamped into every chunk of the emission.
+    void emitFrame(const U8* src, U32 frameNumber);
 
     //! Capture the active DOOM palette out of the engine's color table.
     //! Bumps m_paletteGeneration if anything changed. Rate-group thread.
@@ -217,6 +228,16 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Frames drawn by the engine within the current schedIn tick.
     //! Used to emit telemetry for at most one frame per tick.
     U32 m_drawsThisTick;
+
+    //! Ring buffer of screen-wipe melt frames captured during a
+    //! multi-draw tick, played back one per cycle by schedIn_handler.
+    U8 m_meltFrames[MELT_QUEUE_CAPACITY][FRAME_BYTES];
+    //! Engine frame number for each buffered melt frame.
+    U32 m_meltFrameNumbers[MELT_QUEUE_CAPACITY];
+    //! Index of the oldest buffered melt frame.
+    FwSizeType m_meltHead;
+    //! Number of buffered melt frames.
+    FwSizeType m_meltCount;
 
     // ------------------------------------------------------------------
     // Configuration
