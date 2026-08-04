@@ -79,6 +79,12 @@ TEST(Nominal, StartRejectsUnconfiguredWad) {
     tester->testStartRejectsUnconfiguredWad();
 }
 
+TEST(Nominal, StartCommandRejectsWhenRunning) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testStartCommandRejectsWhenRunning();
+}
+
 TEST(Nominal, KeyTapAllOrNothing) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

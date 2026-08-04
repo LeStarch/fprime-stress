@@ -17,8 +17,8 @@
 // rate group is the sole pacing mechanism (forceStart's bounded
 // rendezvous wait runs on the caller's thread, never the rate-group
 // thread). This makes execution deterministic: cross-thread state is
-// limited to the OSAL mutexes, two std::atomic flags, and the bounded
-// Os::Task::delay polling in forceStart's rendezvous.
+// limited to the OSAL mutexes, the std::atomic members, and the
+// bounded Os::Task::delay polling in forceStart's rendezvous.
 // ======================================================================
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
@@ -322,7 +322,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     // Configuration
     // ------------------------------------------------------------------
 
-    //! Configured WAD path. Empty string means "let DOOM auto-search".
+    //! Configured WAD path. Must be set before Start: an empty path
+    //! is rejected with WadUnavailable (auto-search is not permitted).
     char m_wadPath[WAD_PATH_MAX];
 
     //! Argv storage for doomgeneric_Create. DOOM's parser caches both

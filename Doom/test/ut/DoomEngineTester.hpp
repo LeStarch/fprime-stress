@@ -45,6 +45,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testKeyTapAllOrNothing();
     void testStartRejectsMissingWad();
     void testStartRejectsUnconfiguredWad();
+    void testStartCommandRejectsWhenRunning();
 
   private:
     // Wiring and init provided by auto-generated helpers.

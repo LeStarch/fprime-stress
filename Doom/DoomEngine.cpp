@@ -170,7 +170,13 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     if (!m_engineRunning.load()) {
         // Engine not running - re-publish the last state (OFF or
         // FAILED) as a heartbeat rather than clobbering it with OFF.
-        this->tlmWrite_State(EngineState(m_lastState.load()));
+        // Self-heal a stale RUNNING left by a tick that raced a Stop.
+        const EngineState::T last = m_lastState.load();
+        if (last == EngineState::RUNNING) {
+            this->publishState(EngineState::OFF);
+        } else {
+            this->tlmWrite_State(EngineState(last));
+        }
         return;
     }
     if (m_meltCount > 0U) {
@@ -244,13 +250,17 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 }
 
 // ----------------------------------------------------------------------
-// Commands
+// State telemetry
 // ----------------------------------------------------------------------
 
 void DoomEngine::publishState(EngineState state) {
     m_lastState.store(state.e);
     this->tlmWrite_State(state);
 }
+
+// ----------------------------------------------------------------------
+// Commands
+// ----------------------------------------------------------------------
 
 bool DoomEngine::forceStart() {
     // Serialize concurrent callers (autoStart thread vs a ground Start

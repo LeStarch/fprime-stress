@@ -334,6 +334,15 @@ void DoomEngineTester::testStartRejectsMissingWad() {
     ASSERT_TLM_State(1, Doom::EngineState::FAILED);
 }
 
+void DoomEngineTester::testStartCommandRejectsWhenRunning() {
+    // A Start command on a running engine maps to EXECUTION_ERROR.
+    this->component.m_engineRunning.store(true);
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_AlreadyRunning_SIZE(1);
+}
+
 void DoomEngineTester::testStartRejectsUnconfiguredWad() {
     // No WAD path configured: Start must reject rather than let the
     // vendored auto-search reach I_Error/exit.
