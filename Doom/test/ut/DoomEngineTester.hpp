@@ -46,6 +46,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testStartRejectsMissingWad();
     void testStartRejectsUnconfiguredWad();
     void testStartCommandRejectsWhenRunning();
+    void testHeartbeatSelfHealsStaleRunning();
 
   private:
     // Wiring and init provided by auto-generated helpers.

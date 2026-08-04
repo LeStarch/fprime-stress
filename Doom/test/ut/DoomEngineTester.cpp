@@ -334,6 +334,21 @@ void DoomEngineTester::testStartRejectsMissingWad() {
     ASSERT_TLM_State(1, Doom::EngineState::FAILED);
 }
 
+void DoomEngineTester::testHeartbeatSelfHealsStaleRunning() {
+    // A stale RUNNING latched by a tick that raced a Stop must be
+    // self-healed to OFF by the not-running heartbeat.
+    this->component.m_lastState.store(Doom::EngineState::RUNNING);
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::OFF);
+    ASSERT_EQ(this->component.m_lastState.load(), Doom::EngineState::OFF);
+
+    // Subsequent heartbeats keep publishing OFF.
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_TLM_State_SIZE(2);
+    ASSERT_TLM_State(1, Doom::EngineState::OFF);
+}
+
 void DoomEngineTester::testStartCommandRejectsWhenRunning() {
     // A Start command on a running engine maps to EXECUTION_ERROR.
     this->component.m_engineRunning.store(true);

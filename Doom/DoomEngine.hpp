@@ -219,8 +219,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Total frames produced by the engine.
     U32 m_framesProduced;
 
-    //! Last state published via publishState; re-emitted by the
-    //! not-running heartbeat so FAILED is not clobbered by OFF.
+    //! Last state published via publishState; the not-running
+    //! heartbeat re-emits it (preserving FAILED) except a stale
+    //! RUNNING, which it self-heals to OFF.
     std::atomic<EngineState::T> m_lastState;
 
     //! True while the engine is being driven by the rate group.

@@ -168,12 +168,16 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // observes the engine stopped. See the rendezvous in forceStart().
     TickGuard guard(m_tickInProgress);
     if (!m_engineRunning.load()) {
-        // Engine not running - re-publish the last state (OFF or
-        // FAILED) as a heartbeat rather than clobbering it with OFF.
-        // Self-heal a stale RUNNING left by a tick that raced a Stop.
+        // Engine not running - re-publish the last state (OFF, FAILED,
+        // or a transient STARTING) rather than clobbering it with OFF.
+        // Self-heal a stale RUNNING left by a tick that raced a Stop,
+        // re-checking the running flag so a concurrent Start that just
+        // published RUNNING is not overwritten.
         const EngineState::T last = m_lastState.load();
         if (last == EngineState::RUNNING) {
-            this->publishState(EngineState::OFF);
+            if (!m_engineRunning.load()) {
+                this->publishState(EngineState::OFF);
+            }
         } else {
             this->tlmWrite_State(EngineState(last));
         }
@@ -277,8 +281,13 @@ bool DoomEngine::forceStart() {
     // (bounded at ~1 s, far beyond any tick duration).
     bool rendezvousOk = true;
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if ((spin >= RENDEZVOUS_MAX_SPINS) ||
-            (Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC)) != Os::Task::Status::OP_OK)) {
+        if (spin >= RENDEZVOUS_MAX_SPINS) {
+            rendezvousOk = false;
+            break;
+        }
+        const Os::Task::Status delayStatus =
+            Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC));
+        if (delayStatus != Os::Task::Status::OP_OK) {
             rendezvousOk = false;
             break;
         }

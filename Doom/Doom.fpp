@@ -150,8 +150,8 @@ module Doom {
   @ Declared passive: schedIn is sync (runs on the rate-group thread)
   @ and all command handlers are sync (run on the cmdDispatch thread),
   @ so the component owns no thread of its own. Cross-thread state is
-  @ limited to the mutex-guarded key queue and the atomic
-  @ start/stop + tick-in-progress handoff flags.
+  @ limited to the mutex-guarded key queue and the std::atomic
+  @ members (start/stop, tick-in-progress, last-published-state).
   passive component DoomEngine {
 
     # ------------------------------------------------------------------
