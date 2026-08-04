@@ -215,6 +215,10 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     this->component.m_engineRunning.store(false, std::memory_order_release);
 
     ASSERT_TLM_FrameOut00_SIZE(2);
+    // The palette is re-emitted with every frame, replays included.
+    ASSERT_TLM_PaletteOut_SIZE(2);
+    ASSERT_EQ(this->tlmHistory_PaletteOut->at(1).arg.get_generation(),
+              this->component.m_paletteGeneration);
     const Doom::FrameChunk& replayed = this->tlmHistory_FrameOut00->at(1).arg;
     ASSERT_EQ(replayed.get_frame(), 2U);
     // The replayed chunks must carry the buffered pixel payload at the
@@ -276,6 +280,22 @@ void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
     ASSERT_EVENTS_StartBusy_SIZE(1);
     ASSERT_EVENTS_AlreadyRunning_SIZE(0);
     ASSERT_FALSE(this->component.m_engineRunning.load());
+    // The timeout path bails out before any State telemetry.
+    ASSERT_TLM_State_SIZE(0);
+}
+
+void DoomEngineTester::testKeyTapAllOrNothing() {
+    // Fill the queue to capacity-1: a tap needs 2 slots, so it must
+    // enqueue neither event and count both as dropped.
+    const FwSizeType cap = DoomEngine::KEY_QUEUE_CAPACITY;
+    for (FwSizeType i = 0; i + 1 < cap; ++i) {
+        this->invoke_to_rawKeyIn(0, true, static_cast<U8>(i & 0xFFu));
+    }
+    Doom::DoomKey use_key(Doom::DoomKey::USE);
+    this->invoke_to_keyTapIn(0, use_key);
+    ASSERT_EQ(this->component.m_keyQueueCount, cap - 1);
+    ASSERT_EQ(this->component.m_keysDropped, 2U);
+    ASSERT_EVENTS_KeyQueueOverflow_SIZE(1);
 }
 
 void DoomEngineTester::testForceStartResumesAfterStop() {

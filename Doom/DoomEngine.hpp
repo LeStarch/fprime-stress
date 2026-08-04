@@ -69,6 +69,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Max rendezvous polls: x RENDEZVOUS_DELAY_USEC = ~1 s bound.
     static constexpr U32 RENDEZVOUS_MAX_SPINS = 1000;
 
+    //! Number of RGB entries in the DOOM palette.
+    static constexpr FwSizeType PALETTE_ENTRIES = Doom::PALETTE_BYTES / 3;
+
   public:
     explicit DoomEngine(const char* compName);
     ~DoomEngine() override;
@@ -155,6 +158,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! true on success, false if the queue was full.
     bool enqueueKey(bool pressed, U8 code);
 
+    //! Enqueue a down+up pair atomically: both events are queued or
+    //! neither is, so an overflow cannot leave a key stuck down.
+    bool enqueueKeyTap(U8 code);
+
     //! Emit one full frame as FrameOut chunk telemetry plus the active
     //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
@@ -190,7 +197,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     // ------------------------------------------------------------------
 
     //! Most recently captured palette (R0,G0,B0,...).
-    U8 m_pendingPalette[256 * 3];
+    U8 m_pendingPalette[Doom::PALETTE_BYTES];
     //! Counter incremented whenever the engine swaps palettes.
     U32 m_paletteGeneration;
 
@@ -260,6 +267,12 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_framesThisWindow;
     //! Bytes of FrameOut + PaletteOut emitted inside the current window.
     U32 m_frameBytesThisWindow;
+
+    // ------------------------------------------------------------------
+    // Engine clock and melt-playback state (rate-group thread; reset
+    // by forceStart on the caller's thread during the start/stop
+    // handoff, after the m_tickInProgress rendezvous).
+    // ------------------------------------------------------------------
 
     //! Virtual milliseconds accumulated by platformSleepMs; added to
     //! the real elapsed time reported by platformGetTicksMs.

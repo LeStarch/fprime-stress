@@ -50,6 +50,7 @@ sync command RawKey(
   opcode 4
 
 @ Stop the wrapped DOOM engine cooperatively. The rate group will
-@ stop driving Tick and FrameOut telemetry will cease.
+@ stop driving Tick and FrameOut telemetry will cease. May block
+@ behind an in-flight Start (worst case: first-Start bring-up).
 sync command Stop \
   opcode 5

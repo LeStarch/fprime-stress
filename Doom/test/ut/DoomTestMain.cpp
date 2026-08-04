@@ -67,6 +67,12 @@ TEST(OffNominal, ForceStartBusyRendezvousTimesOut) {
     tester->testForceStartBusyRendezvousTimesOut();
 }
 
+TEST(Nominal, KeyTapAllOrNothing) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testKeyTapAllOrNothing();
+}
+
 TEST(Nominal, StopWhileRunning) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

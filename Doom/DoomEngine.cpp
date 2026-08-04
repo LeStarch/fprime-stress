@@ -133,9 +133,11 @@ DoomEngine* DoomEngine::getInstance() {
 void DoomEngine::setWadPath(const char* wadPath) {
     FW_ASSERT(wadPath != nullptr);
     const FwSizeType len = static_cast<FwSizeType>(::strlen(wadPath));
-    const FwSizeType copy = (len < (WAD_PATH_MAX - 1U)) ? len : (WAD_PATH_MAX - 1U);
-    (void)::memcpy(m_wadPath, wadPath, copy);
-    m_wadPath[copy] = '\0';
+    // Reject rather than silently truncate: a clipped path would fail
+    // WAD load far from the actual cause.
+    FW_ASSERT(len < WAD_PATH_MAX, static_cast<FwAssertArgType>(len));
+    (void)::memcpy(m_wadPath, wadPath, len);
+    m_wadPath[len] = '\0';
 }
 
 // ----------------------------------------------------------------------
@@ -185,8 +187,11 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 
     // Refresh derived telemetry. FrameOut / PaletteOut are emitted
     // either by the melt playback above or from DG_DrawFrame inside
-    // Tick.
-    this->tlmWrite_State(EngineState::RUNNING);
+    // Tick. Re-check the running flag so a Stop that landed mid-tick
+    // is not followed by a stale RUNNING heartbeat.
+    if (m_engineRunning.load()) {
+        this->tlmWrite_State(EngineState::RUNNING);
+    }
     this->tlmWrite_FrameCount(m_framesProduced);
 
     m_keyMutex.lock();
@@ -248,7 +253,7 @@ bool DoomEngine::forceStart() {
         return false;
     }
     // Rendezvous with the rate-group thread: a schedIn tick that
-    // acquire-loaded m_engineRunning==true before a Stop may still be
+    // loaded m_engineRunning==true before a Stop may still be
     // executing; wait for it to finish before mutating engine state
     // (bounded at ~1 s, far beyond any tick duration).
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
@@ -297,11 +302,13 @@ bool DoomEngine::forceStart() {
         // The vendored engine's init (Z_Init, W_AddFile, ...) is
         // one-shot; guard Create so a ground Stop->Start cycle resumes
         // the existing engine instead of re-initialising it.
+        // const_cast: the vendored C API takes char** but never
+        // mutates the argv strings.
         doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
         m_engineCreated = true;
     }
 
-    // Release pairs with the acquire load in schedIn_handler.
+    // Release pairs with the seq_cst load in schedIn_handler.
     m_engineRunning.store(true, std::memory_order_release);
     this->log_ACTIVITY_HI_EngineStarted();
     this->tlmWrite_State(EngineState::RUNNING);
@@ -329,11 +336,8 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
 }
 
 void DoomEngine::KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
-    const U8 code = static_cast<U8>(key.e);
-    const bool downOk = this->enqueueKey(true, code);
-    const bool upOk = this->enqueueKey(false, code);
-    const Fw::CmdResponse response = (downOk && upOk) ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR;
-    this->cmdResponse_out(opCode, cmdSeq, response);
+    const bool ok = this->enqueueKeyTap(static_cast<U8>(key.e));
+    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }
 
 void DoomEngine::KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
@@ -361,9 +365,7 @@ void DoomEngine::RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed
 // ----------------------------------------------------------------------
 
 void DoomEngine::keyTapIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
-    const U8 code = static_cast<U8>(key.e);
-    (void)this->enqueueKey(true, code);
-    (void)this->enqueueKey(false, code);
+    (void)this->enqueueKeyTap(static_cast<U8>(key.e));
 }
 
 void DoomEngine::keyDownIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
@@ -400,6 +402,38 @@ bool DoomEngine::enqueueKey(bool pressed, U8 code) {
         ok = true;
     } else {
         m_keysDropped++;
+        if (!m_overflowReported) {
+            m_overflowReported = true;
+            emitOverflow = true;
+        }
+    }
+    m_keyMutex.unLock();
+    if (emitOverflow) {
+        this->log_WARNING_LO_KeyQueueOverflow();
+    }
+    return ok;
+}
+
+bool DoomEngine::enqueueKeyTap(U8 code) {
+    bool ok = false;
+    bool emitOverflow = false;
+    m_keyMutex.lock();
+    m_inputEventsThisWindow += 2U;
+    m_inputBytesThisWindow += 4U;
+    // All-or-nothing: require room for both the down and up events so
+    // an overflow cannot leave the key stuck down.
+    if ((m_keyQueueCount + 2U) <= KEY_QUEUE_CAPACITY) {
+        const U16 down = static_cast<U16>((1U << 8) | static_cast<U16>(code));
+        const U16 up = static_cast<U16>(code);
+        m_keyQueue[m_keyQueueTail] = down;
+        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
+        m_keyQueue[m_keyQueueTail] = up;
+        m_keyQueueTail = (m_keyQueueTail + 1U) % KEY_QUEUE_CAPACITY;
+        m_keyQueueCount += 2U;
+        m_overflowReported = false;
+        ok = true;
+    } else {
+        m_keysDropped += 2U;
         if (!m_overflowReported) {
             m_overflowReported = true;
             emitOverflow = true;
@@ -516,7 +550,7 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
 
 void DoomEngine::capturePaletteIfChanged() {
     bool changed = false;
-    for (FwSizeType i = 0; i < 256; ++i) {
+    for (FwSizeType i = 0; i < PALETTE_ENTRIES; ++i) {
         const U8 r = static_cast<U8>(colors[i].r);
         const U8 g = static_cast<U8>(colors[i].g);
         const U8 b = static_cast<U8>(colors[i].b);
