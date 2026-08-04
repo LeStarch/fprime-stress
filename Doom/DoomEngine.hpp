@@ -107,8 +107,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Programmatic engine bring-up. Identical to the Start command
     //! except no cmdResponse is emitted. Intended for the autoStart
     //! path in Main.cpp where the binary is launched headless without
-    //! a GDS to dispatch the Start command; must be invoked before the
-    //! rate groups start driving schedIn. Returns true on success.
+    //! a GDS to dispatch the Start command. Safe to call while the
+    //! rate groups are running: it rendezvouses with any in-flight
+    //! schedIn tick before touching engine state. Returns true on
+    //! success.
     bool forceStart();
 
   private:
@@ -193,6 +195,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! reads m_engineRunning; forceStart waits for it to clear before
     //! mutating engine state (see the rendezvous in forceStart).
     std::atomic<bool> m_tickInProgress;
+
+    //! True once doomgeneric_Create has run. The vendored engine's
+    //! initialisation is one-shot, so Create is never invoked twice.
+    bool m_engineCreated;
 
     //! Engine start reference time for DG_GetTicksMs.
     Os::RawTime m_engineStart;

@@ -4,7 +4,7 @@
 
 Yes. Specifically, F Prime runs DOOM.
 
-This repository is the source-of-truth for a single F Prime active
+This repository is the source-of-truth for a single F Prime passive
 component — `Doom::DoomEngine` — that wraps id Software's DOOM (via
 the embeddable [`doomgeneric`](https://github.com/ozkl/doomgeneric)
 port) inside the same component-and-port framework that flies the

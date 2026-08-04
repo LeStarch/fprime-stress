@@ -61,6 +61,12 @@ TEST(OffNominal, MeltOverflowCountsDroppedFrames) {
     tester->testMeltOverflowCountsDroppedFrames();
 }
 
+TEST(OffNominal, ForceStartBusyRendezvousTimesOut) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testForceStartBusyRendezvousTimesOut();
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

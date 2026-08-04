@@ -3,9 +3,9 @@
 # ----------------------------------------------------------------------
 
 # Commands are sync because the component is passive (no worker
-# thread). Each handler is short - mutex-guarded key enqueue or a
-# single doomgeneric_Create call - and runs on the command-dispatch
-# thread.
+# thread) and run on the command-dispatch thread. Key handlers are a
+# short mutex-guarded enqueue; Start runs engine bring-up inline and
+# may first wait (bounded, ~1 s) for an in-flight rate-group tick.
 
 @ Start the wrapped DOOM engine. Calls doomgeneric_Create which loads
 @ the WAD and runs DOOM's initialisation through to the first idle

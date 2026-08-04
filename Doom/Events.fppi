@@ -28,3 +28,10 @@ event AlreadyRunning() \
   severity warning low \
   id 3 \
   format "Start ignored - engine already running"
+
+@ A Start command could not rendezvous with the rate-group thread: a
+@ previous tick was still in flight after the bounded wait.
+event StartBusy() \
+  severity warning low \
+  id 4 \
+  format "Start rejected - a rate-group tick is still in flight"

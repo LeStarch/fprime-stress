@@ -178,8 +178,11 @@ void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
 }
 
 void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
+    // Position-dependent pattern so a chunk-offset bug cannot pass.
     static U8 buf[DoomEngine::FRAME_BYTES];
-    (void)::memset(buf, 0xA5, sizeof(buf));
+    for (U32 i = 0; i < DoomEngine::FRAME_BYTES; ++i) {
+        buf[i] = static_cast<U8>(i % 251U);
+    }
     DG_ScreenBuffer = reinterpret_cast<pixel_t*>(buf);
 
     // Capture one melt frame (first draw emits, second buffers).
@@ -197,10 +200,18 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     ASSERT_TLM_FrameOut00_SIZE(2);
     const Doom::FrameChunk& replayed = this->tlmHistory_FrameOut00->at(1).arg;
     ASSERT_EQ(replayed.get_frame(), 2U);
-    // The replayed chunk must carry the buffered pixel payload.
-    const U8* const pixels = replayed.get_pixels();
-    for (U32 i = 0; i < static_cast<U32>(Doom::FRAME_CHUNK_BYTES); ++i) {
-        ASSERT_EQ(pixels[i], 0xA5U) << "pixel index " << i;
+    // The replayed chunks must carry the buffered pixel payload at the
+    // correct per-chunk offsets (first and last chunks checked).
+    const U8* const first = replayed.get_pixels();
+    ASSERT_TLM_FrameOut79_SIZE(2);
+    const Doom::FrameChunk& last = this->tlmHistory_FrameOut79->at(1).arg;
+    ASSERT_EQ(last.get_frame(), 2U);
+    const U8* const lastPix = last.get_pixels();
+    const U32 chunkBytes = static_cast<U32>(Doom::FRAME_CHUNK_BYTES);
+    const U32 lastOffset = 79U * chunkBytes;
+    for (U32 i = 0; i < chunkBytes; ++i) {
+        ASSERT_EQ(first[i], buf[i]) << "chunk 0 pixel " << i;
+        ASSERT_EQ(lastPix[i], buf[lastOffset + i]) << "chunk 79 pixel " << i;
     }
     ASSERT_EQ(this->component.m_meltCount, 0U);
 
@@ -235,6 +246,19 @@ void DoomEngineTester::testMeltOverflowCountsDroppedFrames() {
     ASSERT_TLM_FramesDropped(0, 2U);
 
     DG_ScreenBuffer = nullptr;
+}
+
+void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
+    // Simulate a rate-group tick that never finishes: forceStart must
+    // give up after its bounded wait, emit StartBusy, and leave the
+    // engine stopped without touching engine state.
+    this->component.m_tickInProgress.store(true);
+    ASSERT_FALSE(this->component.forceStart());
+    this->component.m_tickInProgress.store(false);
+
+    ASSERT_EVENTS_StartBusy_SIZE(1);
+    ASSERT_EVENTS_AlreadyRunning_SIZE(0);
+    ASSERT_FALSE(this->component.m_engineRunning.load());
 }
 
 }  // namespace Doom

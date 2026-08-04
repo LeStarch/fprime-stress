@@ -95,6 +95,7 @@ DoomEngine::DoomEngine(const char* compName)
       m_framesProduced(0),
       m_engineRunning(false),
       m_tickInProgress(false),
+      m_engineCreated(false),
       m_engineStartValid(false),
       m_keyQueueHead(0),
       m_keyQueueTail(0),
@@ -144,15 +145,28 @@ void DoomEngine::setWadPath(const char* wadPath) {
 // schedIn: one Tick per rate-group invocation
 // ----------------------------------------------------------------------
 
+namespace {
+// Scope guard: clears the tick-in-progress flag on every exit path.
+class TickGuard final {
+  public:
+    explicit TickGuard(std::atomic<bool>& flag) : m_flag(flag) { m_flag.store(true); }
+    ~TickGuard() { m_flag.store(false); }
+    TickGuard(const TickGuard&) = delete;
+    TickGuard& operator=(const TickGuard&) = delete;
+
+  private:
+    std::atomic<bool>& m_flag;
+};
+}  // namespace
+
 void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // Publish tick-in-progress BEFORE reading m_engineRunning (both
     // seq_cst): forceStart() only mutates engine state after seeing
     // this flag clear, so either it waits for this tick or this tick
     // observes the engine stopped. See the rendezvous in forceStart().
-    m_tickInProgress.store(true);
+    TickGuard guard(m_tickInProgress);
     if (!m_engineRunning.load()) {
         // Engine not started - publish IDLE state heartbeat.
-        m_tickInProgress.store(false);
         this->tlmWrite_State(EngineState::OFF);
         return;
     }
@@ -221,7 +235,6 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         m_framesThisWindow = 0U;
         m_frameBytesThisWindow = 0U;
     }
-    m_tickInProgress.store(false);
 }
 
 // ----------------------------------------------------------------------
@@ -238,11 +251,11 @@ bool DoomEngine::forceStart() {
     // executing; wait for it to finish before mutating engine state
     // (bounded at ~1 s, far beyond any tick duration).
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if (spin >= 1000U) {
-            this->log_WARNING_LO_AlreadyRunning();
+        if ((spin >= 1000U) ||
+            (Os::Task::delay(Fw::TimeInterval(0, 1000)) != Os::Task::Status::OP_OK)) {
+            this->log_WARNING_LO_StartBusy();
             return false;
         }
-        Os::Task::delay(Fw::TimeInterval(0, 1000));
     }
     this->tlmWrite_State(EngineState::STARTING);
 
@@ -258,24 +271,25 @@ bool DoomEngine::forceStart() {
     m_virtualSleepMs = 0U;
     m_realElapsedUsec = 0U;
 
-    // Run the engine in singletics mode: exactly one game tic is built
-    // and run per doomgeneric_Tick() call. This removes every wall-
-    // clock dependency from TryRunTics — no catch-up tic bursts after
-    // stalls, and no busy-wait until the next 35 Hz tic boundary when
-    // the rate group fires marginally before DOOM's own clock rolls
-    // over (the beat between the two clocks otherwise blocks the
-    // rate-group thread for up to a full tic period, slipping the
-    // following cycle). Set before Create so the tics run inside
-    // D_DoomLoop's startup are already singletics-paced (upstream
-    // likewise sets it during D_DoomMain for -timedemo).
-    singletics = 1U;
+    if (!m_engineCreated) {
+        // Run the engine in singletics mode: exactly one game tic per
+        // doomgeneric_Tick() call, removing every wall-clock dependency
+        // from TryRunTics (no catch-up bursts, no busy-wait against the
+        // 35 Hz tic boundary). Set before Create so startup tics are
+        // already singletics-paced (upstream does this for -timedemo).
+        singletics = 1U;
 
-    // doomgeneric caches argv (as myargv) and walks it later from
-    // M_CheckParm, so both the pointer array and the backing strings
-    // must outlive the call. Both live in DoomEngine members.
-    const int argc = this->buildEngineArgv(m_argvPointers,
-                                           static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
-    doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
+        // doomgeneric caches argv (as myargv) and walks it later from
+        // M_CheckParm, so both the pointer array and the backing strings
+        // must outlive the call. Both live in DoomEngine members.
+        const int argc = this->buildEngineArgv(m_argvPointers,
+                                               static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
+        // The vendored engine's init (Z_Init, W_AddFile, ...) is
+        // one-shot; guard Create so a ground Stop->Start cycle resumes
+        // the existing engine instead of re-initialising it.
+        doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
+        m_engineCreated = true;
+    }
 
     // Release pairs with the acquire load in schedIn_handler.
     m_engineRunning.store(true, std::memory_order_release);

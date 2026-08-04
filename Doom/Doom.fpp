@@ -68,7 +68,7 @@ module Doom {
 
   enum EngineState {
     OFF       = 0  @< Engine has not been started yet.
-    STARTING  = 1  @< doomgeneric_Create is running on the worker task.
+    STARTING  = 1  @< doomgeneric_Create is running in the Start handler.
     RUNNING   = 2  @< Engine is ticking and producing frames.
     FAILED    = 3  @< Engine task exited or failed to start.
   } default OFF
