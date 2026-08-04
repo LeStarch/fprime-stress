@@ -20,6 +20,7 @@
 #include "Doom/FppConstantsAc.hpp"
 
 #include <Fw/Types/Assert.hpp>
+#include <Fw/Types/String.hpp>
 #include <Fw/Time/TimeInterval.hpp>
 #include <Os/File.hpp>
 #include <Os/Task.hpp>
@@ -91,6 +92,7 @@ DoomEngine::DoomEngine(const char* compName)
     : DoomEngineComponentBase(compName),
       m_paletteGeneration(0),
       m_framesProduced(0),
+      m_lastState(EngineState::OFF),
       m_engineRunning(false),
       m_tickInProgress(false),
       m_engineCreated(false),
@@ -166,8 +168,9 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // observes the engine stopped. See the rendezvous in forceStart().
     TickGuard guard(m_tickInProgress);
     if (!m_engineRunning.load()) {
-        // Engine not started - publish OFF state heartbeat.
-        this->tlmWrite_State(EngineState::OFF);
+        // Engine not running - re-publish the last state (OFF or
+        // FAILED) as a heartbeat rather than clobbering it with OFF.
+        this->tlmWrite_State(EngineState(m_lastState.load()));
         return;
     }
     if (m_meltCount > 0U) {
@@ -191,7 +194,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // Tick. Re-check the running flag so a Stop that landed mid-tick
     // is not followed by a stale RUNNING heartbeat.
     if (m_engineRunning.load()) {
-        this->tlmWrite_State(EngineState::RUNNING);
+        this->publishState(EngineState::RUNNING);
     }
     this->tlmWrite_FrameCount(m_framesProduced);
 
@@ -244,6 +247,11 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 // Commands
 // ----------------------------------------------------------------------
 
+void DoomEngine::publishState(EngineState state) {
+    m_lastState.store(state.e);
+    this->tlmWrite_State(state);
+}
+
 bool DoomEngine::forceStart() {
     // Serialize concurrent callers (autoStart thread vs a ground Start
     // command): only one caller may run the check-rendezvous-create
@@ -257,30 +265,36 @@ bool DoomEngine::forceStart() {
     // loaded m_engineRunning==true before a Stop may still be
     // executing; wait for it to finish before mutating engine state
     // (bounded at ~1 s, far beyond any tick duration).
+    bool rendezvousOk = true;
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if (spin >= RENDEZVOUS_MAX_SPINS) {
-            this->log_WARNING_LO_StartBusy();
-            return false;
-        }
-        const Os::Task::Status delayStatus = Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC));
-        if (delayStatus != Os::Task::Status::OP_OK) {
-            this->log_WARNING_LO_StartBusy();
-            return false;
+        if ((spin >= RENDEZVOUS_MAX_SPINS) ||
+            (Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC)) != Os::Task::Status::OP_OK)) {
+            rendezvousOk = false;
+            break;
         }
     }
-    if (!m_engineCreated && (m_wadPath[0] != '\0')) {
+    if (!rendezvousOk) {
+        // Busy rejects deliberately leave State telemetry untouched.
+        this->log_WARNING_LO_StartBusy();
+        return false;
+    }
+    if (!m_engineCreated) {
         // Pre-validate the WAD: the vendored engine calls exit() via
-        // I_Error on a missing WAD, which would take down the whole
-        // flight process. Reject the Start instead.
+        // I_Error on a missing or unfindable WAD, which would take
+        // down the whole flight process. Reject the Start instead.
+        // Advisory only (TOCTOU): a WAD removed after this check can
+        // still reach I_Error.
         Os::File wad;
-        if (wad.open(m_wadPath, Os::File::OPEN_READ) != Os::File::OP_OK) {
-            this->log_WARNING_HI_WadUnavailable(Fw::LogStringArg(m_wadPath));
-            this->tlmWrite_State(EngineState::FAILED);
+        if ((m_wadPath[0] == '\0') ||
+            (wad.open(m_wadPath, Os::File::OPEN_READ) != Os::File::OP_OK)) {
+            const char* const shown = (m_wadPath[0] != '\0') ? m_wadPath : "(no WAD path configured)";
+            this->log_WARNING_HI_WadUnavailable(Fw::String(shown));
+            this->publishState(EngineState::FAILED);
             return false;
         }
         wad.close();
     }
-    this->tlmWrite_State(EngineState::STARTING);
+    this->publishState(EngineState::STARTING);
 
     // (Re)base the reference time used by DG_GetTicksMs so time spent
     // stopped is not counted. The elapsed-time accumulators are reset
@@ -325,7 +339,7 @@ bool DoomEngine::forceStart() {
     // operations share the single seq_cst total order.
     m_engineRunning.store(true);
     this->log_ACTIVITY_HI_EngineStarted();
-    this->tlmWrite_State(EngineState::RUNNING);
+    this->publishState(EngineState::RUNNING);
     return true;
 }
 
@@ -345,7 +359,7 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
         m_engineRunning.store(false);
         this->log_ACTIVITY_HI_EngineStopped();
     }
-    this->tlmWrite_State(EngineState::OFF);
+    this->publishState(EngineState::OFF);
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 
@@ -566,13 +580,8 @@ void DoomEngine::capturePaletteIfChanged() {
 }
 
 void DoomEngine::platformSleepMs(U32 ms) {
-    // Never block the rate-group thread. Instead treat a sleep request
-    // as virtual time passing: advance the clock DG_GetTicksMs reports
-    // by the requested amount. The only in-engine sleep loops (the
-    // screen-wipe melt in D_Display, and TryRunTics' wait loop, which
-    // singletics mode never reaches) poll I_GetTime between I_Sleep(1)
-    // calls, so advancing virtual time lets them run to completion
-    // immediately instead of stalling the 35 Hz cycle.
+    // Never block the rate-group thread: accumulate the request as
+    // virtual time for DG_GetTicksMs (see README, "Pacing model").
     m_virtualSleepMs += ms;
 }
 

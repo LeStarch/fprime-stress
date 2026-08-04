@@ -322,10 +322,28 @@ void DoomEngineTester::testStartRejectsMissingWad() {
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
     ASSERT_EVENTS_WadUnavailable_SIZE(1);
+    ASSERT_EVENTS_WadUnavailable(0, "/nonexistent/doom1.wad");
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_TLM_State_SIZE(1);
     ASSERT_TLM_State(0, Doom::EngineState::FAILED);
     ASSERT_FALSE(this->component.m_engineRunning.load());
+
+    // FAILED persists across schedIn heartbeats (not clobbered by OFF).
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_TLM_State_SIZE(2);
+    ASSERT_TLM_State(1, Doom::EngineState::FAILED);
+}
+
+void DoomEngineTester::testStartRejectsUnconfiguredWad() {
+    // No WAD path configured: Start must reject rather than let the
+    // vendored auto-search reach I_Error/exit.
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_WadUnavailable_SIZE(1);
+    ASSERT_EVENTS_WadUnavailable(0, "(no WAD path configured)");
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
 }
 
 void DoomEngineTester::testForceStartResumesAfterStop() {

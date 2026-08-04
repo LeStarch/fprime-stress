@@ -44,7 +44,7 @@ sync command KeyUp(
   opcode 3
 
 @ Press or release a raw DOOM key code, bypassing the named enum.
-@ Use this from the GDS keyboard plugin to forward arbitrary keys
+@ Intended for ground tooling or sequences that need arbitrary keys
 @ (numeric digits, characters, etc.) without growing the enum.
 sync command RawKey(
                      pressed: bool

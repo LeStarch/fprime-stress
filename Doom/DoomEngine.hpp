@@ -168,6 +168,9 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! rate-window counters and overflow reporting under m_keyMutex.
     bool enqueueKeyEvents(const U16* entries, FwSizeType count);
 
+    //! Record and emit the State telemetry channel.
+    void publishState(EngineState state);
+
     //! Pack one key event into the queue's wire format: bit 8 is the
     //! pressed flag, bits 0-7 the key code (unpacked by platformGetKey).
     static constexpr U16 packKeyEntry(bool pressed, U8 code) {
@@ -215,6 +218,10 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Total frames produced by the engine.
     U32 m_framesProduced;
+
+    //! Last state published via publishState; re-emitted by the
+    //! not-running heartbeat so FAILED is not clobbered by OFF.
+    std::atomic<EngineState::T> m_lastState;
 
     //! True while the engine is being driven by the rate group.
     //! All loads/stores are seq_cst so the handoff with

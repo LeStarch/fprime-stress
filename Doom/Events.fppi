@@ -37,9 +37,11 @@ event StartBusy() \
   id 4 \
   format "Start rejected - could not rendezvous with the rate group"
 
-@ The configured WAD file could not be opened. Start is rejected so a
-@ missing or unreadable WAD cannot take down the whole flight process
-@ via the engine's internal error handler.
+@ No WAD path was configured, or the configured WAD could not be
+@ opened. Start is rejected so these cases cannot take down the whole
+@ flight process via the engine's internal error handler. The check is
+@ advisory: a WAD that opens but is malformed, or is removed after the
+@ check, can still reach the vendored error handler.
 event WadUnavailable(
                       wadPath: string size 256 @< The WAD path that failed to open
                     ) \
