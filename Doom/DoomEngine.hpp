@@ -1,14 +1,16 @@
 // ======================================================================
-// \title  Doom.hpp
+// \title  DoomEngine.hpp
 // \brief  F Prime component that wraps the open-source DOOM engine.
 //
 // The engine is driven entirely from the rate-group thread that calls
 // the schedIn port: one Tick of doomgeneric is executed per call. The
 // only other thread that ever touches component state is the command-
 // dispatch thread, which writes into the mutex-guarded key queue and
-// performs the start/stop handoff: forceStart/Stop publish engine
-// state and then release-store the atomic m_engineRunning flag, which
-// schedIn_handler acquire-loads before touching any engine state.
+// performs the start/stop handoff: forceStart first waits for any
+// in-flight schedIn tick to finish (m_tickInProgress rendezvous),
+// publishes engine state, then release-stores the atomic
+// m_engineRunning flag, which schedIn_handler acquire-loads before
+// touching any engine state.
 //
 // No worker thread is spawned and no internal sleep is performed - the
 // rate group is the sole pacing mechanism. This makes execution
@@ -143,7 +145,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Emit one full frame as FrameOut chunk telemetry plus the active
     //! palette. src holds FRAME_BYTES of 8-bit palette indices;
     //! frameNumber is stamped into every chunk of the emission.
-    void emitFrame(const U8 (&src)[FRAME_BYTES], U32 frameNumber);
+    void emitFrame(const U8* src, U32 frameNumber);
 
     //! Capture the active DOOM palette out of the engine's color table.
     //! Bumps m_paletteGeneration if anything changed. Rate-group thread.
@@ -178,8 +180,6 @@ class DoomEngine final : public DoomEngineComponentBase {
     U8 m_pendingPalette[256 * 3];
     //! Counter incremented whenever the engine swaps palettes.
     U32 m_paletteGeneration;
-    //! Palette generation value last sent to the ground.
-    U32 m_lastEmittedPaletteGeneration;
 
     //! Total frames produced by the engine.
     U32 m_framesProduced;
@@ -188,6 +188,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Release-stored by the command thread, acquire-loaded by the
     //! rate-group thread; carries the start-state publication.
     std::atomic<bool> m_engineRunning;
+
+    //! True while schedIn_handler is executing. Set before the handler
+    //! reads m_engineRunning; forceStart waits for it to clear before
+    //! mutating engine state (see the rendezvous in forceStart).
+    std::atomic<bool> m_tickInProgress;
 
     //! Engine start reference time for DG_GetTicksMs.
     Os::RawTime m_engineStart;
@@ -238,9 +243,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! the real elapsed time reported by platformGetTicksMs.
     U32 m_virtualSleepMs;
 
-    //! Highest tick value reported so far; keeps the engine clock
-    //! monotonic across getDiffUsec overflow (~71.6 min).
-    U32 m_lastReportedTickMs;
+    //! Real microseconds elapsed since Start, accumulated in 64 bits
+    //! with m_engineStart rebased on every read so getDiffUsec's U32
+    //! range (~71.6 min) is never exceeded.
+    U64 m_realElapsedUsec;
 
     //! Frames drawn by the engine within the current schedIn tick.
     //! Used to emit telemetry for at most one frame per tick.

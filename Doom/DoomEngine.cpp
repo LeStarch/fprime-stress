@@ -1,5 +1,5 @@
 // ======================================================================
-// \title  Doom.cpp
+// \title  DoomEngine.cpp
 // \brief  F Prime DOOM engine wrapper - implementation.
 //
 // The engine is driven from a Svc.Sched input port. The schedIn handler
@@ -8,8 +8,9 @@
 // the singleton DoomEngine instance.
 //
 // Cross-thread communication is limited to the key queue (guarded by
-// m_keyMutex) and the start/stop handoff: forceStart/Stop publish all
-// engine state, then release-store m_engineRunning; schedIn_handler
+// m_keyMutex) and the start/stop handoff: forceStart rendezvouses with
+// any in-flight schedIn tick (m_tickInProgress), publishes all engine
+// state, then release-stores m_engineRunning; schedIn_handler
 // acquire-loads it before touching any engine state.
 // ======================================================================
 #include "Doom/DoomEngine.hpp"
@@ -18,16 +19,14 @@
 
 #include <Fw/Types/Assert.hpp>
 #include <Fw/Time/TimeInterval.hpp>
+#include <Os/Task.hpp>
 
 #include <cstring>
 
 extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
-#include "Doom/doomgeneric/doomtype.h"
-// One game tic per TryRunTics() call (d_loop.c). Upstream uses this for
-// -timedemo; here it decouples game-logic advancement from the wall
-// clock entirely so the rate group is the sole pacing mechanism.
-extern boolean singletics;
+// d_loop.h exports singletics: one game tic per TryRunTics() call.
+#include "Doom/doomgeneric/d_loop.h"
 struct color {
     unsigned b : 8;
     unsigned g : 8;
@@ -93,9 +92,9 @@ const DoomEngine::FrameOutWriter DoomEngine::kFrameOutWriters[Doom::CHUNKS_PER_F
 DoomEngine::DoomEngine(const char* compName)
     : DoomEngineComponentBase(compName),
       m_paletteGeneration(0),
-      m_lastEmittedPaletteGeneration(0),
       m_framesProduced(0),
       m_engineRunning(false),
+      m_tickInProgress(false),
       m_engineStartValid(false),
       m_keyQueueHead(0),
       m_keyQueueTail(0),
@@ -108,7 +107,7 @@ DoomEngine::DoomEngine(const char* compName)
       m_framesThisWindow(0),
       m_frameBytesThisWindow(0),
       m_virtualSleepMs(0),
-      m_lastReportedTickMs(0),
+      m_realElapsedUsec(0),
       m_drawsThisTick(0),
       m_meltHead(0),
       m_meltCount(0),
@@ -146,10 +145,14 @@ void DoomEngine::setWadPath(const char* wadPath) {
 // ----------------------------------------------------------------------
 
 void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
-    // Acquire pairs with the release store in forceStart(): all engine
-    // state written before the start handoff is visible here.
-    if (!m_engineRunning.load(std::memory_order_acquire)) {
+    // Publish tick-in-progress BEFORE reading m_engineRunning (both
+    // seq_cst): forceStart() only mutates engine state after seeing
+    // this flag clear, so either it waits for this tick or this tick
+    // observes the engine stopped. See the rendezvous in forceStart().
+    m_tickInProgress.store(true);
+    if (!m_engineRunning.load()) {
         // Engine not started - publish IDLE state heartbeat.
+        m_tickInProgress.store(false);
         this->tlmWrite_State(EngineState::OFF);
         return;
     }
@@ -218,6 +221,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         m_framesThisWindow = 0U;
         m_frameBytesThisWindow = 0U;
     }
+    m_tickInProgress.store(false);
 }
 
 // ----------------------------------------------------------------------
@@ -229,22 +233,30 @@ bool DoomEngine::forceStart() {
         this->log_WARNING_LO_AlreadyRunning();
         return false;
     }
+    // Rendezvous with the rate-group thread: a schedIn tick that
+    // acquire-loaded m_engineRunning==true before a Stop may still be
+    // executing; wait for it to finish before mutating engine state
+    // (bounded at ~1 s, far beyond any tick duration).
+    for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
+        if (spin >= 1000U) {
+            this->log_WARNING_LO_AlreadyRunning();
+            return false;
+        }
+        Os::Task::delay(Fw::TimeInterval(0, 1000));
+    }
     this->tlmWrite_State(EngineState::STARTING);
 
     // Initialise reference time used by DG_GetTicksMs.
     const Os::RawTime::Status rt = m_engineStart.now();
     m_engineStartValid = (rt == Os::RawTime::Status::OP_OK);
 
-    // doomgeneric caches argv (as myargv) and walks it later from
-    // M_CheckParm, so both the pointer array and the backing strings
-    // must outlive the call. Both live in DoomEngine members.
     // Discard any per-run pacing state left over from a previous run
     // (e.g. a melt playback interrupted by Stop).
     m_meltHead = 0U;
     m_meltCount = 0U;
     m_drawsThisTick = 0U;
     m_virtualSleepMs = 0U;
-    m_lastReportedTickMs = 0U;
+    m_realElapsedUsec = 0U;
 
     // Run the engine in singletics mode: exactly one game tic is built
     // and run per doomgeneric_Tick() call. This removes every wall-
@@ -258,6 +270,9 @@ bool DoomEngine::forceStart() {
     // likewise sets it during D_DoomMain for -timedemo).
     singletics = 1U;
 
+    // doomgeneric caches argv (as myargv) and walks it later from
+    // M_CheckParm, so both the pointer array and the backing strings
+    // must outlive the call. Both live in DoomEngine members.
     const int argc = this->buildEngineArgv(m_argvPointers,
                                            static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
     doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
@@ -426,10 +441,11 @@ void DoomEngine::platformDrawFrame() {
         return;
     }
 
-    this->emitFrame(*reinterpret_cast<const U8(*)[FRAME_BYTES]>(src), m_framesProduced);
+    this->emitFrame(src, m_framesProduced);
 }
 
-void DoomEngine::emitFrame(const U8 (&src)[FRAME_BYTES], U32 frameNumber) {
+void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
+    FW_ASSERT(src != nullptr);
     this->capturePaletteIfChanged();
 
     // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
@@ -481,7 +497,6 @@ void DoomEngine::emitFrame(const U8 (&src)[FRAME_BYTES], U32 frameNumber) {
     (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
     this->tlmWrite_PaletteOut(pal);
     m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
-    m_lastEmittedPaletteGeneration = m_paletteGeneration;
 }
 
 void DoomEngine::capturePaletteIfChanged() {
@@ -517,23 +532,21 @@ void DoomEngine::platformSleepMs(U32 ms) {
 }
 
 U32 DoomEngine::platformGetTicksMs() {
-    // The reported clock is kept monotonic via m_lastReportedTickMs:
-    // getDiffUsec overflows its U32 after ~71.6 min, and a backwards
-    // step would stall in-engine time-poll loops.
-    U32 computed = m_virtualSleepMs;
+    // Real elapsed time accumulates in a U64 and m_engineStart is
+    // rebased on every successful read, so each getDiffUsec delta stays
+    // tiny and its U32 range (~71.6 min) is never hit. On a failed read
+    // the clock simply does not advance; it never steps backwards.
     if (m_engineStartValid) {
         Os::RawTime current;
         if (current.now() == Os::RawTime::Status::OP_OK) {
             U32 deltaUsec = 0U;
             if (current.getDiffUsec(m_engineStart, deltaUsec) == Os::RawTime::Status::OP_OK) {
-                computed = (deltaUsec / 1000U) + m_virtualSleepMs;
+                m_realElapsedUsec += deltaUsec;
+                m_engineStart = current;
             }
         }
     }
-    if (computed > m_lastReportedTickMs) {
-        m_lastReportedTickMs = computed;
-    }
-    return m_lastReportedTickMs;
+    return static_cast<U32>(m_realElapsedUsec / 1000U) + m_virtualSleepMs;
 }
 
 void DoomEngine::platformSetTitle(const char* title) {

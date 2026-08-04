@@ -1,5 +1,5 @@
 // ======================================================================
-// \title  DoomTester.cpp
+// \title  DoomEngineTester.cpp
 // \brief  Unit-test harness for the DoomEngine component.
 // ======================================================================
 
@@ -195,8 +195,44 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     this->component.m_engineRunning.store(false, std::memory_order_release);
 
     ASSERT_TLM_FrameOut00_SIZE(2);
-    ASSERT_EQ(this->tlmHistory_FrameOut00->at(1).arg.get_frame(), 2U);
+    const Doom::FrameChunk& replayed = this->tlmHistory_FrameOut00->at(1).arg;
+    ASSERT_EQ(replayed.get_frame(), 2U);
+    // The replayed chunk must carry the buffered pixel payload.
+    const U8* const pixels = replayed.get_pixels();
+    for (U32 i = 0; i < static_cast<U32>(Doom::FRAME_CHUNK_BYTES); ++i) {
+        ASSERT_EQ(pixels[i], 0xA5U) << "pixel index " << i;
+    }
     ASSERT_EQ(this->component.m_meltCount, 0U);
+
+    DG_ScreenBuffer = nullptr;
+}
+
+void DoomEngineTester::testMeltOverflowCountsDroppedFrames() {
+    static U8 buf[DoomEngine::FRAME_BYTES];
+    (void)::memset(buf, 0x11, sizeof(buf));
+    DG_ScreenBuffer = reinterpret_cast<pixel_t*>(buf);
+
+    // One live draw, then fill the melt ring to capacity, then two more
+    // draws that must be dropped and counted.
+    const FwSizeType cap = DoomEngine::MELT_QUEUE_CAPACITY;
+    this->component.platformDrawFrame();
+    for (FwSizeType i = 0; i < cap; ++i) {
+        this->component.platformDrawFrame();
+    }
+    ASSERT_EQ(this->component.m_meltCount, cap);
+    ASSERT_EQ(this->component.m_framesDropped, 0U);
+
+    this->component.platformDrawFrame();
+    this->component.platformDrawFrame();
+    ASSERT_EQ(this->component.m_meltCount, cap);
+    ASSERT_EQ(this->component.m_framesDropped, 2U);
+
+    // schedIn publishes the drop count on the FramesDropped channel.
+    this->component.m_engineRunning.store(true, std::memory_order_release);
+    this->invoke_to_schedIn(0, 0);
+    this->component.m_engineRunning.store(false, std::memory_order_release);
+    ASSERT_TLM_FramesDropped_SIZE(1);
+    ASSERT_TLM_FramesDropped(0, 2U);
 
     DG_ScreenBuffer = nullptr;
 }

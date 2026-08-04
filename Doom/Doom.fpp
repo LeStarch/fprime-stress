@@ -141,13 +141,15 @@ module Doom {
   @
   @ Engine pacing is driven entirely from the schedIn port: each call
   @ runs exactly one doomgeneric_Tick (one DOOM frame of game logic)
-  @ on the rate-group thread. doomgeneric_Create is invoked
-  @ synchronously by the Start command handler.
+  @ or replays one buffered screen-wipe melt frame on the rate-group
+  @ thread. doomgeneric_Create is invoked synchronously by the Start
+  @ command handler after rendezvousing with any in-flight tick.
   @
   @ Declared passive: schedIn is sync (runs on the rate-group thread)
   @ and all command handlers are sync (run on the cmdDispatch thread),
   @ so the component owns no thread of its own. Cross-thread state is
-  @ limited to the key queue, which is mutex-guarded.
+  @ limited to the mutex-guarded key queue and the atomic
+  @ start/stop + tick-in-progress handoff flags.
   passive component DoomEngine {
 
     # ------------------------------------------------------------------

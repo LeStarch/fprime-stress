@@ -231,9 +231,8 @@ glue calls `malloc` after init. doomgeneric's own `Z_Init` arena is
 allocated exactly once from inside upstream code we deliberately do
 not modify; the F Prime glue itself is malloc-free in steady state.
 
-The DoomEngine is an **active component** (so the parallel input
-ports / commands can be enqueued on its own thread) but `schedIn`
-is **sync**: each rate-group tick runs DOOM inline on the
+The DoomEngine is a **passive component** — it owns no thread of
+its own — and `schedIn` is **sync**: each rate-group tick runs DOOM inline on the
 `rateGroup1Comp` thread. A tick that overruns its budget therefore
 trips `RateGroupCycleSlip` immediately rather than silently being
 absorbed by a queue — which is the discipline you want from a
