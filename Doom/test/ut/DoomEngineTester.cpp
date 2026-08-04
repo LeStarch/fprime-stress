@@ -261,4 +261,15 @@ void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
     ASSERT_FALSE(this->component.m_engineRunning.load());
 }
 
+void DoomEngineTester::testForceStartWhenAlreadyRunning() {
+    // A Start while the engine runs must fail fast with AlreadyRunning
+    // and leave the running state untouched.
+    this->component.m_engineRunning.store(true, std::memory_order_release);
+    ASSERT_FALSE(this->component.forceStart());
+    ASSERT_EVENTS_AlreadyRunning_SIZE(1);
+    ASSERT_EVENTS_StartBusy_SIZE(0);
+    ASSERT_TRUE(this->component.m_engineRunning.load());
+    this->component.m_engineRunning.store(false, std::memory_order_release);
+}
+
 }  // namespace Doom

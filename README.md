@@ -238,6 +238,11 @@ trips `RateGroupCycleSlip` immediately rather than silently being
 absorbed by a queue — which is the discipline you want from a
 flight-software rate group.
 
+The vendored engine builds with `-w -O2` regardless of the project
+build type (flags only — the source is untouched): DOOM's level load
+runs inside a single game tic, and unoptimized builds can exceed the
+28.57 ms rate-group budget at demo level transitions.
+
 ## Pacing model
 
 The engine runs in upstream doomgeneric's `singletics` mode: exactly

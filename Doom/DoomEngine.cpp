@@ -242,6 +242,10 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
 // ----------------------------------------------------------------------
 
 bool DoomEngine::forceStart() {
+    // Serialize concurrent callers (autoStart thread vs a ground Start
+    // command): only one caller may run the check-rendezvous-create
+    // sequence at a time.
+    Os::ScopeLock startLock(m_startMutex);
     if (m_engineRunning.load(std::memory_order_acquire)) {
         this->log_WARNING_LO_AlreadyRunning();
         return false;
@@ -251,27 +255,36 @@ bool DoomEngine::forceStart() {
     // executing; wait for it to finish before mutating engine state
     // (bounded at ~1 s, far beyond any tick duration).
     for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if ((spin >= 1000U) ||
-            (Os::Task::delay(Fw::TimeInterval(0, 1000)) != Os::Task::Status::OP_OK)) {
+        if (spin >= 1000U) {
+            this->log_WARNING_LO_StartBusy();
+            return false;
+        }
+        const Os::Task::Status delayStatus = Os::Task::delay(Fw::TimeInterval(0, 1000));
+        if (delayStatus != Os::Task::Status::OP_OK) {
             this->log_WARNING_LO_StartBusy();
             return false;
         }
     }
     this->tlmWrite_State(EngineState::STARTING);
 
-    // Initialise reference time used by DG_GetTicksMs.
+    // (Re)base the reference time used by DG_GetTicksMs so time spent
+    // stopped is not counted. The elapsed-time accumulators are reset
+    // only on the first start: the vendored timer caches a basetime
+    // derived from this clock, so it must never step backwards across
+    // a Stop->Start cycle.
     const Os::RawTime::Status rt = m_engineStart.now();
     m_engineStartValid = (rt == Os::RawTime::Status::OP_OK);
 
-    // Discard any per-run pacing state left over from a previous run
+    // Discard melt/draw pacing state left over from a previous run
     // (e.g. a melt playback interrupted by Stop).
     m_meltHead = 0U;
     m_meltCount = 0U;
     m_drawsThisTick = 0U;
-    m_virtualSleepMs = 0U;
-    m_realElapsedUsec = 0U;
 
     if (!m_engineCreated) {
+        m_virtualSleepMs = 0U;
+        m_realElapsedUsec = 0U;
+
         // Run the engine in singletics mode: exactly one game tic per
         // doomgeneric_Tick() call, removing every wall-clock dependency
         // from TryRunTics (no catch-up bursts, no busy-wait against the
@@ -434,14 +447,9 @@ void DoomEngine::platformDrawFrame() {
     m_framesThisWindow++;
     m_drawsThisTick++;
 
-    // The screen-wipe melt in D_Display draws its whole animation
-    // (dozens of frames) inside a single doomgeneric_Tick call — its
-    // sleep/poll loop completes against virtual time (see
-    // platformSleepMs). Emitting full FrameOut telemetry for every
-    // melt step in one cycle would burn tens of milliseconds and slip
-    // the rate group, so the first draw of a tick is emitted live and
-    // the remaining draws are captured into the melt buffer, which
-    // schedIn_handler plays back one frame per cycle.
+    // A melt draws its whole animation inside one Tick (see the
+    // pacing model in the README): emit the first draw live, capture
+    // the rest for schedIn_handler to play back one frame per cycle.
     if (m_drawsThisTick > 1U) {
         if (m_meltCount < MELT_QUEUE_CAPACITY) {
             const FwSizeType slot = (m_meltHead + m_meltCount) % MELT_QUEUE_CAPACITY;
@@ -495,16 +503,9 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
         m_frameBytesThisWindow += static_cast<U32>(Doom::FRAME_CHUNK_BYTES) + 16U;
     }
 
-    // Palette is emitted on every frame, not just on change. The palette
-    // is only 768 B (256 RGB triples) versus 256 KB of FrameOut, so the
-    // bandwidth cost is negligible (~27 KB/s at 35 Hz). The benefit is
-    // that the ground stays in sync with the active palette no matter
-    // when it attached - a generation-gated emission was lost forever
-    // if the single change-tick arrived before the GDS session opened
-    // or while comQueue back-pressure was draining the FrameOut burst.
-    // Eventually-consistent palette delivery is what gives the canvas
-    // its colours; without it the addon's grayscale fallback ramp
-    // sticks around even though the frame data itself is correct.
+    // The palette (768 B, negligible vs 256 KB frames) is emitted
+    // every frame rather than on change, so the ground converges on
+    // the active palette regardless of when it attached.
     Doom::Palette pal;
     pal.set_generation(m_paletteGeneration);
     U8* const dest = pal.get_rgb();

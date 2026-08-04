@@ -7,10 +7,11 @@
 # short mutex-guarded enqueue; Start runs engine bring-up inline and
 # may first wait (bounded, ~1 s) for an in-flight rate-group tick.
 
-@ Start the wrapped DOOM engine. Calls doomgeneric_Create which loads
-@ the WAD and runs DOOM's initialisation through to the first idle
-@ tick before returning. After this command completes, the rate-group
-@ thread (via the schedIn port) drives doomgeneric_Tick.
+@ Start the wrapped DOOM engine. The first Start calls
+@ doomgeneric_Create, which loads the WAD and runs DOOM's
+@ initialisation through to the first idle tick; a Start after a Stop
+@ resumes the existing engine. After this command completes, the
+@ rate-group thread (via the schedIn port) drives doomgeneric_Tick.
 sync command Start \
   opcode 0
 

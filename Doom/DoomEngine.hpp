@@ -12,10 +12,11 @@
 // m_engineRunning flag, which schedIn_handler acquire-loads before
 // touching any engine state.
 //
-// No worker thread is spawned and no internal sleep is performed - the
-// rate group is the sole pacing mechanism. This makes execution
-// deterministic and avoids any need for OS-specific scheduling
-// primitives beyond the OSAL mutex.
+// No worker thread is spawned and the tick path never sleeps - the
+// rate group is the sole pacing mechanism (forceStart's bounded
+// rendezvous wait runs on the caller's thread, never the rate-group
+// thread). This makes execution deterministic and avoids any need for
+// OS-specific scheduling primitives beyond the OSAL mutex.
 // ======================================================================
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
@@ -199,6 +200,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! True once doomgeneric_Create has run. The vendored engine's
     //! initialisation is one-shot, so Create is never invoked twice.
     bool m_engineCreated;
+
+    //! Serializes concurrent forceStart callers (autoStart thread vs
+    //! a ground Start command).
+    Os::Mutex m_startMutex;
 
     //! Engine start reference time for DG_GetTicksMs.
     Os::RawTime m_engineStart;
