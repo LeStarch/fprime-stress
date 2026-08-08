@@ -65,6 +65,7 @@ EXPECTED_SIZE_BYTES = 4_196_020
 # shareware DOOM1.WAD v1.9. Keep the canonical/most-stable mirror first
 # so a healthy network requires only one HTTP fetch.
 DEFAULT_MIRRORS: List[str] = [
+    "https://raw.githubusercontent.com/Akbar30Bill/DOOM_wads/master/doom1.wad",
     "https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad",
     "https://archive.org/download/DoomsharewareEpisode/doom1.wad",
     "https://www.doomworld.com/3ddownloads/ports/shareware_doom_iwad.zip",
