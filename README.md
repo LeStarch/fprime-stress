@@ -217,6 +217,9 @@ gds-plugin/                     JS-only fprime-gds addon
   dashboard.xml                 Dashboard panel that hosts the addon
   install.sh                    Drops the addon into fprime-gds and
                                 enables the Dashboard tab
+yamcs-plugin/                   yamcs-web extension (fprime-yamcs)
+  doom-display/                 Canvas renderer + key bindings, loaded
+                                via fprime-yamcs --yamcs-web-extension-dirs
 tools/
   fprime-get-doom/              Apache-2.0 fetch-and-verify helper
 THIRDPARTY/                     upstream license attribution

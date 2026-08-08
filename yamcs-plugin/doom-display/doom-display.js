@@ -73,6 +73,7 @@ class DoomDisplay {
         this.drawScheduled = false;
         this.websocket = null;
         this.statusText = "connecting...";
+        this.statusLine = null;
         // FPS measurement over a rolling one-second window
         this.fpsWindowStart = performance.now();
         this.fpsWindowFrames = 0;
@@ -85,8 +86,15 @@ class DoomDisplay {
             await this.resolveMdb();
             this.subscribe();
         } catch (err) {
-            this.statusText = "error: " + err.message;
+            this.setStatus("error: " + err.message);
             console.error("doom-display:", err);
+        }
+    }
+
+    setStatus(text) {
+        this.statusText = text;
+        if (this.statusLine) {
+            this.statusLine.textContent = text;
         }
     }
 
@@ -187,7 +195,7 @@ class DoomDisplay {
         const websocket = new WebSocket(scheme + location.host + "/api/websocket");
         this.websocket = websocket;
         websocket.onopen = () => {
-            this.statusText = "subscribed";
+            this.setStatus("subscribed");
             websocket.send(JSON.stringify({
                 type: "packets",
                 id: 1,
@@ -196,7 +204,7 @@ class DoomDisplay {
         };
         websocket.onmessage = (event) => this.onMessage(event);
         websocket.onclose = () => {
-            this.statusText = "disconnected - retrying in 2s";
+            this.setStatus("disconnected - retrying in 2s");
             this.websocket = null;
             setTimeout(() => this.subscribe(), 2000);
         };
@@ -229,9 +237,12 @@ class DoomDisplay {
         const row = view.getUint16(4);
         const rowCount = view.getUint16(6);
         const width = view.getUint16(8);
-        const pixelCount = Math.min(rowCount * width, FRAME_WIDTH * FRAME_HEIGHT - row * width);
+        if (width !== FRAME_WIDTH || row >= FRAME_HEIGHT || row + rowCount > FRAME_HEIGHT) {
+            return;
+        }
+        const pixelCount = rowCount * width;
         const source = PKT_DATA_OFFSET + CHUNK_PIXELS_OFFSET;
-        if (bytes.length < source + pixelCount || width !== FRAME_WIDTH) {
+        if (bytes.length < source + pixelCount) {
             return;
         }
         this.pixels.set(bytes.subarray(source, source + pixelCount), row * width);
@@ -302,8 +313,9 @@ class DoomDisplay {
         if (!qualifiedName) {
             return;
         }
+        const encodedName = qualifiedName.split("/").map(encodeURIComponent).join("/");
         fetch("/api/processors/" + encodeURIComponent(this.instance) + "/realtime/commands"
-            + qualifiedName, {
+            + encodedName, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({args: args || {}}),
@@ -331,6 +343,15 @@ class DoomDisplay {
         event.preventDefault();
         this.heldKeys[key] = false;
         this.sendCommand("KeyUp", {key: key});
+    }
+
+    releaseHeldKeys() {
+        for (const key of Object.keys(this.heldKeys)) {
+            if (this.heldKeys[key]) {
+                this.heldKeys[key] = false;
+                this.sendCommand("KeyUp", {key: key});
+            }
+        }
     }
 
     buildPanel() {
@@ -364,6 +385,7 @@ class DoomDisplay {
         canvas.onclick = () => canvas.focus();
         canvas.onkeydown = (event) => this.onKeyDown(event);
         canvas.onkeyup = (event) => this.onKeyUp(event);
+        canvas.onblur = () => this.releaseHeldKeys();
         panel.appendChild(canvas);
         this.canvas = canvas;
 
