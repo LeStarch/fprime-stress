@@ -382,17 +382,17 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 
-void DoomEngine::KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+void DoomEngine::KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
     const bool ok = this->enqueueKeyTap(static_cast<U8>(key.e));
     this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }
 
-void DoomEngine::KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+void DoomEngine::KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
     const bool ok = this->enqueueKey(true, static_cast<U8>(key.e));
     this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }
 
-void DoomEngine::KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) {
+void DoomEngine::KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
     const bool ok = this->enqueueKey(false, static_cast<U8>(key.e));
     this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }

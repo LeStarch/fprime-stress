@@ -138,9 +138,9 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     void Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) override;
     void Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) override;
-    void KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) override;
-    void KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) override;
-    void KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, Doom::DoomKey key) override;
+    void KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
+    void KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
+    void KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
     void RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed, U8 code) override;
 
     //! Parallel-to-command input port handlers. Same enqueue path as the
