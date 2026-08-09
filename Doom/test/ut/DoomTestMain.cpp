@@ -43,6 +43,12 @@ TEST(Nominal, ResetCommandSetsFlag) {
     tester->testResetCommandSetsFlag();
 }
 
+TEST(Nominal, SchedInAppliesReset) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testSchedInAppliesReset();
+}
+
 TEST(Nominal, SchedInPulseSafeWhenEngineOff) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

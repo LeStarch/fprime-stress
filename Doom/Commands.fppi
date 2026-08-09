@@ -64,7 +64,9 @@ sync command Stop \
 @ flushed, any in-flight screen-wipe playback is discarded, and the
 @ engine returns to the title sequence via its own start-title
 @ machinery. The engine itself is not torn down (the vendored engine
-@ has no clean shutdown path). Responds EXECUTION_ERROR if the
-@ engine has never been started.
+@ has no clean shutdown path). A Reset while the engine is created
+@ but stopped responds OK and latches the request; it is applied on
+@ the first tick after the next Start. Responds EXECUTION_ERROR if
+@ the engine has never been started.
 sync command Reset \
   opcode 6

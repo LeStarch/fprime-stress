@@ -35,6 +35,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testStopCommandResponds();
     void testResetRejectsBeforeStart();
     void testResetCommandSetsFlag();
+    void testSchedInAppliesReset();
     void testSchedInWhenEngineOff();
     void testVirtualSleepAdvancesTicks();
     void testDrawFrameEmitsFirstDrawAndBuffersMelt();

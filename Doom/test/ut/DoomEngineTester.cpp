@@ -186,6 +186,42 @@ void DoomEngineTester::testResetCommandSetsFlag() {
     this->component.m_engineCreated = false;
 }
 
+void DoomEngineTester::testSchedInAppliesReset() {
+    // A latched reset is applied at the top of the next running tick:
+    // the key queue is flushed, melt playback is discarded, EngineReset
+    // is emitted, and no frame is played back or ticked that cycle.
+    // D_StartTitle only latches engine-side flags, so the path is safe
+    // to drive without a created engine.
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(0x10));
+    this->invoke_to_rawKeyIn(0, false, static_cast<U8>(0x10));
+    ASSERT_EQ(this->component.m_keyQueueCount, 2u);
+    this->component.m_meltCount = 2U;
+    this->component.m_meltHead = 1U;
+    this->component.m_resetRequested.store(true);
+
+    this->component.m_engineRunning.store(true);
+    this->invoke_to_schedIn(0, 0);
+    this->component.m_engineRunning.store(false);
+
+    ASSERT_EVENTS_EngineReset_SIZE(1);
+    ASSERT_FALSE(this->component.m_resetRequested.load());
+    ASSERT_EQ(this->component.m_keyQueueCount, 0u);
+    ASSERT_EQ(this->component.m_meltCount, 0u);
+    ASSERT_EQ(this->component.m_meltHead, 0u);
+    // The reset tick neither plays back a melt frame nor ticks DOOM.
+    ASSERT_TLM_FrameOut00_SIZE(0);
+    ASSERT_TLM_KeyQueueDepth_SIZE(1);
+    ASSERT_TLM_KeyQueueDepth(0, 0u);
+
+    // A second reset request while stopped stays latched until the
+    // next running tick, then applies exactly once.
+    this->component.m_resetRequested.store(true);
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_EVENTS_EngineReset_SIZE(1);
+    ASSERT_TRUE(this->component.m_resetRequested.load());
+    this->component.m_resetRequested.store(false);
+}
+
 void DoomEngineTester::testSchedInWhenEngineOff() {
     this->invoke_to_schedIn(0, 0);
     // No FrameOutNN channel should be emitted when the engine is off.
