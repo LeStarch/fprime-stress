@@ -186,10 +186,14 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         }
         return;
     }
-    if (m_resetRequested.exchange(false)) {
+    const bool resetRequested = m_resetRequested.exchange(false);
+    if (resetRequested) {
         // Flush pending input and any in-flight melt playback, then
         // return the game to the title sequence - the same state a
-        // freshly booted engine idles in.
+        // freshly booted engine idles in. D_StartTitle only latches
+        // engine-side flags; the title sequence itself starts on the
+        // next Tick, so this tick skips straight to the telemetry
+        // refresh below.
         m_keyMutex.lock();
         m_keyQueueHead = 0U;
         m_keyQueueTail = 0U;
@@ -200,8 +204,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         m_meltCount = 0U;
         D_StartTitle();
         this->log_ACTIVITY_HI_EngineReset();
-    }
-    if (m_meltCount > 0U) {
+    } else if (m_meltCount > 0U) {
         // A screen-wipe melt was captured on an earlier tick (see
         // platformDrawFrame). Play it back one frame per cycle so the
         // animation is visible at its native 35 Hz pace, holding the

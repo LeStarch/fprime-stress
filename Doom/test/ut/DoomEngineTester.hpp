@@ -33,6 +33,9 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testParallelPortsEnqueueKeys();
     void testOverflowEmitsEvent();
     void testStopCommandResponds();
+    void testResetRejectsBeforeStart();
+    void testResetCommandSetsFlag();
+    void testSchedInAppliesReset();
     void testSchedInWhenEngineOff();
     void testVirtualSleepAdvancesTicks();
     void testDrawFrameEmitsFirstDrawAndBuffersMelt();

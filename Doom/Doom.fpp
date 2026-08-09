@@ -151,7 +151,8 @@ module Doom {
   @ and all command handlers are sync (run on the cmdDispatch thread),
   @ so the component owns no thread of its own. Cross-thread state is
   @ limited to the mutex-guarded key queue and the std::atomic
-  @ members (start/stop, tick-in-progress, last-published-state).
+  @ members (start/stop, tick-in-progress, last-published-state,
+  @ reset-requested).
   passive component DoomEngine {
 
     # ------------------------------------------------------------------

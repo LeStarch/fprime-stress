@@ -47,6 +47,11 @@ const CHUNK_PIXELS_OFFSET = 10;
 const PALETTE_RGB_OFFSET = 4;
 const PALETTE_BYTES = 768;
 
+// Cap on commands captured per recording; protects browser memory if a
+// recording is left running (recording continues while the panel is
+// closed).
+const MAX_RECORDED_COMMANDS = 10000;
+
 // Browser key -> Doom.DoomKey enum label (Doom.fpp).
 const KEY_TO_DOOMKEY = {
     "ArrowUp": "UP", "ArrowDown": "DOWN", "ArrowLeft": "LEFT", "ArrowRight": "RIGHT",
@@ -83,6 +88,14 @@ class DoomDisplay {
         this.recording = false;
         this.recorded = [];   // {timeMs, qualifiedName, args: {..}}
         this.recordStartMs = 0;
+        this.recordTruncated = false;
+        // Engine running state: seeded by panel clicks, corrected by
+        // the State telemetry channel subscription. Lives on the
+        // instance, not the panel DOM, so closing and reopening the
+        // panel preserves button labels.
+        this.engineStarted = false;
+        this.stateParameter = null;
+        this.paintEngineButton = null;
         // FPS measurement over a rolling one-second window
         this.fpsWindowStart = performance.now();
         this.fpsWindowFrames = 0;
@@ -197,6 +210,18 @@ class DoomDisplay {
         for (const suffix of ["KeyDown", "KeyUp", "Start", "Stop", "Reset"]) {
             this.commands[suffix] = prefix + suffix;
         }
+        // The State telemetry channel lives on the same component.
+        // Verify it exists in the MDB before subscribing; without it
+        // the Start/Stop toggle falls back to click-seeded state.
+        const stateParameter = prefix + "State";
+        try {
+            await this.fetchJson("/api/mdb/" + encodeURIComponent(this.instance)
+                + "/parameters" + stateParameter.split("/").map(encodeURIComponent).join("/"));
+            this.stateParameter = stateParameter;
+        } catch (err) {
+            console.warn("doom-display: no State parameter in MDB;"
+                + " Start/Stop toggle will not track external engine state", err);
+        }
     }
 
     subscribe() {
@@ -210,6 +235,22 @@ class DoomDisplay {
                 id: 1,
                 options: {instance: this.instance, stream: "tm_realtime"},
             }));
+            if (this.stateParameter) {
+                // Track the engine State channel so the Start/Stop
+                // toggle follows the real engine state (autoStart, GDS
+                // commands, sequences), not just panel clicks.
+                websocket.send(JSON.stringify({
+                    type: "parameters",
+                    id: 2,
+                    options: {
+                        instance: this.instance,
+                        processor: "realtime",
+                        id: [{name: this.stateParameter}],
+                        sendFromCache: true,
+                        abortOnInvalid: false,
+                    },
+                }));
+            }
         };
         websocket.onmessage = (event) => this.onMessage(event);
         websocket.onclose = () => {
@@ -221,6 +262,10 @@ class DoomDisplay {
 
     onMessage(event) {
         const message = JSON.parse(event.data);
+        if (message.type === "parameters") {
+            this.absorbEngineState(message.data);
+            return;
+        }
         if (message.type !== "packets" || !message.data || !message.data.packet) {
             return;
         }
@@ -267,6 +312,24 @@ class DoomDisplay {
                 this.fpsWindowFrames = 0;
             }
             this.scheduleDraw();
+        }
+    }
+
+    absorbEngineState(data) {
+        for (const pval of (data && data.values) || []) {
+            const engValue = pval.engValue || {};
+            const state = engValue.stringValue
+                || (engValue.enumValue ? engValue.enumValue.label : null);
+            if (state == null) {
+                continue;
+            }
+            const running = state === "RUNNING" || state === "STARTING";
+            if (running !== this.engineStarted) {
+                this.engineStarted = running;
+                if (this.paintEngineButton) {
+                    this.paintEngineButton();
+                }
+            }
         }
     }
 
@@ -322,19 +385,34 @@ class DoomDisplay {
         if (!qualifiedName) {
             return;
         }
-        if (this.recording) {
-            this.recorded.push({
-                timeMs: performance.now() - this.recordStartMs,
-                qualifiedName: qualifiedName,
-                args: args || {},
-            });
-        }
+        // Capture the send time now, but only record the entry once
+        // YAMCS accepts the command, so the .seq never contains
+        // commands that were not actually issued.
+        const entry = this.recording ? {
+            timeMs: performance.now() - this.recordStartMs,
+            qualifiedName: qualifiedName,
+            args: args || {},
+        } : null;
         const encodedName = qualifiedName.split("/").map(encodeURIComponent).join("/");
         fetch("/api/processors/" + encodeURIComponent(this.instance) + "/realtime/commands"
             + encodedName, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({args: args || {}}),
+        }).then((response) => {
+            if (!response.ok) {
+                console.warn("doom-display: command rejected:", suffix, response.status);
+                return;
+            }
+            if (entry && this.recording) {
+                if (this.recorded.length < MAX_RECORDED_COMMANDS) {
+                    this.recorded.push(entry);
+                } else if (!this.recordTruncated) {
+                    this.recordTruncated = true;
+                    console.warn("doom-display: recording capped at "
+                        + MAX_RECORDED_COMMANDS + " commands; further commands dropped");
+                }
+            }
         }).catch((err) => console.warn("doom-display: command failed:", suffix, err));
     }
 
@@ -373,6 +451,7 @@ class DoomDisplay {
     startRecording() {
         this.recording = true;
         this.recorded = [];
+        this.recordTruncated = false;
         this.recordStartMs = performance.now();
     }
 
@@ -397,10 +476,17 @@ class DoomDisplay {
                 + new Date().toISOString(),
             ";",
         ];
+        if (this.recordTruncated) {
+            lines.push("; WARNING: recording exceeded " + MAX_RECORDED_COMMANDS
+                + " commands; later commands were dropped");
+        }
         let previousMs = 0;
-        for (const entry of recorded) {
+        // Entries are appended on POST completion, so slow responses
+        // can land out of order; sort by capture time before emitting.
+        const ordered = recorded.slice().sort((a, b) => a.timeMs - b.timeMs);
+        for (const entry of ordered) {
             const mnemonic = entry.qualifiedName.split("/").filter(Boolean)
-                .slice(1).join(".");
+                .slice(1).join(".").replace(/\s+/g, "");
             const argText = Object.values(entry.args)
                 .map((value) => formatSeqArg(value)).join(" ");
             const deltaMs = Math.max(0, Math.round(entry.timeMs - previousMs));
@@ -442,15 +528,19 @@ class DoomDisplay {
         const buttonCss = "background:#333;color:#eee;border:1px solid #555;"
             + "border-radius:3px;padding:2px 10px;cursor:pointer;";
 
-        // Start <-> Stop toggle. Tracks panel-side intent only; it does
-        // not follow State telemetry.
+        // Start <-> Stop toggle. Seeded by clicks, corrected by the
+        // State telemetry subscription; the label reflects
+        // this.engineStarted so it survives close/reopen.
         const startStop = document.createElement("button");
-        startStop.textContent = "Start";
+        this.paintEngineButton = () => {
+            startStop.textContent = this.engineStarted ? "Stop" : "Start";
+        };
+        this.paintEngineButton();
         startStop.style.cssText = buttonCss;
         startStop.onclick = () => {
-            const starting = startStop.textContent === "Start";
-            this.sendCommand(starting ? "Start" : "Stop", {});
-            startStop.textContent = starting ? "Stop" : "Start";
+            this.engineStarted = !this.engineStarted;
+            this.sendCommand(this.engineStarted ? "Start" : "Stop", {});
+            this.paintEngineButton();
         };
         controls.appendChild(startStop);
 
@@ -462,20 +552,23 @@ class DoomDisplay {
         controls.appendChild(reset);
 
         // Record <-> Stop Recording toggle; stopping downloads the .seq.
+        // Recording continues while the panel is closed; the rebuilt
+        // button reflects this.recording.
         const record = document.createElement("button");
-        record.textContent = "Record";
+        const paintRecord = () => {
+            record.textContent = this.recording ? "Stop Recording" : "Record";
+            record.style.background = this.recording ? "#770000" : "#333";
+        };
         record.title = "Record commands sent from this panel into a .seq sequence file";
         record.style.cssText = buttonCss;
+        paintRecord();
         record.onclick = () => {
             if (this.recording) {
                 this.stopRecording();
-                record.textContent = "Record";
-                record.style.background = "#333";
             } else {
                 this.startRecording();
-                record.textContent = "Stop Recording";
-                record.style.background = "#770000";
             }
+            paintRecord();
         };
         controls.appendChild(record);
 
@@ -630,13 +723,22 @@ class DoomDisplay {
 function formatSeqArg(value) {
     if (typeof value === "string") {
         // Enum labels (e.g. DoomKey UP) are bare identifiers; anything
-        // else is emitted as a quoted string argument.
-        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : '"' + value + '"';
+        // else is emitted as a quoted string argument with quotes,
+        // backslashes, and line breaks sanitized so a recorded value
+        // cannot break out of the argument or inject a sequence line.
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+            return value;
+        }
+        const sanitized = value.replace(/[\r\n]+/g, " ")
+            .replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+        return '"' + sanitized + '"';
     }
     if (typeof value === "boolean") {
         return value ? "TRUE" : "FALSE";
     }
-    return String(value);
+    // Numbers and anything else: strip whitespace so a stray
+    // toString cannot split or inject a sequence line.
+    return String(value).replace(/\s+/g, "");
 }
 
 function relativeTimeTag(deltaMs) {
