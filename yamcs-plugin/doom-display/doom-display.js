@@ -235,11 +235,9 @@ class DoomDisplay {
                     options: {
                         instance: this.instance,
                         processor: "realtime",
-                        request: {
-                            id: [{name: this.stateParameter}],
-                            sendFromCache: true,
-                            abortOnInvalid: false,
-                        },
+                        id: [{name: this.stateParameter}],
+                        sendFromCache: true,
+                        abortOnInvalid: false,
                     },
                 }));
             }
