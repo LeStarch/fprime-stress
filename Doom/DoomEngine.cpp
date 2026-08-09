@@ -31,6 +31,8 @@ extern "C" {
 #include "Doom/doomgeneric/doomgeneric.h"
 // d_loop.h exports singletics: one game tic per TryRunTics() call.
 #include "Doom/doomgeneric/d_loop.h"
+// d_main.h exports D_StartTitle: return to the boot title sequence.
+#include "Doom/doomgeneric/d_main.h"
 // i_video.h declares the engine's active palette (struct color colors[256]).
 #include "Doom/doomgeneric/i_video.h"
 }  // extern "C"
@@ -96,6 +98,7 @@ DoomEngine::DoomEngine(const char* compName)
       m_engineRunning(false),
       m_tickInProgress(false),
       m_engineCreated(false),
+      m_resetRequested(false),
       m_engineStartValid(false),
       m_keyQueueHead(0),
       m_keyQueueTail(0),
@@ -182,6 +185,21 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
             this->tlmWrite_State(EngineState(last));
         }
         return;
+    }
+    if (m_resetRequested.exchange(false)) {
+        // Flush pending input and any in-flight melt playback, then
+        // return the game to the title sequence - the same state a
+        // freshly booted engine idles in.
+        m_keyMutex.lock();
+        m_keyQueueHead = 0U;
+        m_keyQueueTail = 0U;
+        m_keyQueueCount = 0U;
+        m_overflowReported = false;
+        m_keyMutex.unLock();
+        m_meltHead = 0U;
+        m_meltCount = 0U;
+        D_StartTitle();
+        this->log_ACTIVITY_HI_EngineReset();
     }
     if (m_meltCount > 0U) {
         // A screen-wipe melt was captured on an earlier tick (see
@@ -379,6 +397,21 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
         this->log_ACTIVITY_HI_EngineStopped();
     }
     this->publishState(EngineState::OFF);
+    this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
+}
+
+void DoomEngine::Reset_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
+    // Serialize with Start/Stop so m_engineCreated is read consistently.
+    Os::ScopeLock startLock(m_startMutex);
+    if (!m_engineCreated) {
+        this->log_WARNING_LO_ResetNotStarted();
+        this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::EXECUTION_ERROR);
+        return;
+    }
+    // Applied by the rate-group thread at the top of its next running
+    // tick; if the engine is stopped the reset is consumed on the
+    // first tick after the next Start.
+    m_resetRequested.store(true);
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 

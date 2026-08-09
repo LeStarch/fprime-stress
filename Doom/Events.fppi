@@ -49,3 +49,17 @@ event WadUnavailable(
   severity warning high \
   id 5 \
   format "Start rejected - cannot open WAD file {}"
+
+@ The game was reset back to its initial (title screen) state in
+@ response to a Reset command.
+event EngineReset() \
+  severity activity high \
+  id 6 \
+  format "DOOM engine reset to initial state"
+
+@ A Reset command was issued before the engine was ever started;
+@ there is no game state to reset.
+event ResetNotStarted() \
+  severity warning low \
+  id 7 \
+  format "Reset ignored - engine has never been started"

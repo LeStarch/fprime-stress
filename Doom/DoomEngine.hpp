@@ -138,6 +138,7 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     void Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) override;
     void Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) override;
+    void Reset_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) override;
     void KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
     void KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
     void KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) override;
@@ -237,6 +238,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! True once doomgeneric_Create has run. The vendored engine's
     //! initialisation is one-shot, so Create is never invoked twice.
     bool m_engineCreated;
+
+    //! Set by Reset_cmdHandler; consumed by the rate-group thread at
+    //! the top of its next running tick, which flushes input state
+    //! and returns the game to the title sequence.
+    std::atomic<bool> m_resetRequested;
 
     //! Serializes concurrent forceStart callers (autoStart thread vs
     //! a ground Start command).
