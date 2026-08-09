@@ -31,7 +31,9 @@ Space / Ctrl. The panel offers three controls:
 - **Record/Stop Recording** — a toggle that records every command
   sent from the panel; stopping downloads them as an F Prime textual
   `.seq` sequence file with relative time tags (verified against the
-  fprime-gds `SeqFileParser`). Recording is capped at 10000 commands.
+  fprime-gds `SeqFileParser`). Only commands accepted by YAMCS are
+  recorded. Recording continues while the panel is closed or
+  minimized and is capped at 10000 commands.
 
 ## How it works
 
@@ -42,7 +44,8 @@ Space / Ctrl. The panel offers three controls:
   the `KeyDown`/`KeyUp`/`Start`/`Stop`/`Reset` commands, and the
   `State` telemetry parameter from the YAMCS MDB at runtime, so it
   works with any deployment embedding the Doom subtopology regardless
-  of naming or base ids.
+  of naming or base ids (if no `State` parameter exists next to the
+  commands, the Start/Stop toggle falls back to click-seeded state).
 - Frames arrive through a WebSocket subscription to the raw
   `tm_realtime` packet stream and are decoded from the binary
   packetized-telemetry (Svc.TlmPacketizer, APID 4) wire format; a

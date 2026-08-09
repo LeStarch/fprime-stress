@@ -219,7 +219,14 @@ void DoomEngineTester::testSchedInAppliesReset() {
     this->invoke_to_schedIn(0, 0);
     ASSERT_EVENTS_EngineReset_SIZE(1);
     ASSERT_TRUE(this->component.m_resetRequested.load());
-    this->component.m_resetRequested.store(false);
+
+    // The latched request is applied on the first running tick after
+    // the next Start.
+    this->component.m_engineRunning.store(true);
+    this->invoke_to_schedIn(0, 0);
+    this->component.m_engineRunning.store(false);
+    ASSERT_EVENTS_EngineReset_SIZE(2);
+    ASSERT_FALSE(this->component.m_resetRequested.load());
 }
 
 void DoomEngineTester::testSchedInWhenEngineOff() {

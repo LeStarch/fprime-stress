@@ -211,7 +211,17 @@ class DoomDisplay {
             this.commands[suffix] = prefix + suffix;
         }
         // The State telemetry channel lives on the same component.
-        this.stateParameter = prefix + "State";
+        // Verify it exists in the MDB before subscribing; without it
+        // the Start/Stop toggle falls back to click-seeded state.
+        const stateParameter = prefix + "State";
+        try {
+            await this.fetchJson("/api/mdb/" + encodeURIComponent(this.instance)
+                + "/parameters" + stateParameter.split("/").map(encodeURIComponent).join("/"));
+            this.stateParameter = stateParameter;
+        } catch (err) {
+            console.warn("doom-display: no State parameter in MDB;"
+                + " Start/Stop toggle will not track external engine state", err);
+        }
     }
 
     subscribe() {
@@ -375,25 +385,34 @@ class DoomDisplay {
         if (!qualifiedName) {
             return;
         }
-        if (this.recording) {
-            if (this.recorded.length < MAX_RECORDED_COMMANDS) {
-                this.recorded.push({
-                    timeMs: performance.now() - this.recordStartMs,
-                    qualifiedName: qualifiedName,
-                    args: args || {},
-                });
-            } else if (!this.recordTruncated) {
-                this.recordTruncated = true;
-                console.warn("doom-display: recording capped at "
-                    + MAX_RECORDED_COMMANDS + " commands; further commands dropped");
-            }
-        }
+        // Capture the send time now, but only record the entry once
+        // YAMCS accepts the command, so the .seq never contains
+        // commands that were not actually issued.
+        const entry = this.recording ? {
+            timeMs: performance.now() - this.recordStartMs,
+            qualifiedName: qualifiedName,
+            args: args || {},
+        } : null;
         const encodedName = qualifiedName.split("/").map(encodeURIComponent).join("/");
         fetch("/api/processors/" + encodeURIComponent(this.instance) + "/realtime/commands"
             + encodedName, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({args: args || {}}),
+        }).then((response) => {
+            if (!response.ok) {
+                console.warn("doom-display: command rejected:", suffix, response.status);
+                return;
+            }
+            if (entry && this.recording) {
+                if (this.recorded.length < MAX_RECORDED_COMMANDS) {
+                    this.recorded.push(entry);
+                } else if (!this.recordTruncated) {
+                    this.recordTruncated = true;
+                    console.warn("doom-display: recording capped at "
+                        + MAX_RECORDED_COMMANDS + " commands; further commands dropped");
+                }
+            }
         }).catch((err) => console.warn("doom-display: command failed:", suffix, err));
     }
 
@@ -462,9 +481,12 @@ class DoomDisplay {
                 + " commands; later commands were dropped");
         }
         let previousMs = 0;
-        for (const entry of recorded) {
+        // Entries are appended on POST completion, so slow responses
+        // can land out of order; sort by capture time before emitting.
+        const ordered = recorded.slice().sort((a, b) => a.timeMs - b.timeMs);
+        for (const entry of ordered) {
             const mnemonic = entry.qualifiedName.split("/").filter(Boolean)
-                .slice(1).join(".");
+                .slice(1).join(".").replace(/\s+/g, "");
             const argText = Object.values(entry.args)
                 .map((value) => formatSeqArg(value)).join(" ");
             const deltaMs = Math.max(0, Math.round(entry.timeMs - previousMs));
@@ -714,7 +736,9 @@ function formatSeqArg(value) {
     if (typeof value === "boolean") {
         return value ? "TRUE" : "FALSE";
     }
-    return String(value);
+    // Numbers and anything else: strip whitespace so a stray
+    // toString cannot split or inject a sequence line.
+    return String(value).replace(/\s+/g, "");
 }
 
 function relativeTimeTag(deltaMs) {
