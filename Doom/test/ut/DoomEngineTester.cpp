@@ -160,6 +160,32 @@ void DoomEngineTester::testStopWhileRunning() {
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_STOP, 0, Fw::CmdResponse::OK);
 }
 
+void DoomEngineTester::testResetRejectsBeforeStart() {
+    // Reset before the engine was ever created has no game state to
+    // reset: EXECUTION_ERROR, ResetNotStarted, and no pending request.
+    this->sendCmd_Reset(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RESET, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_ResetNotStarted_SIZE(1);
+    ASSERT_EVENTS_EngineReset_SIZE(0);
+    ASSERT_FALSE(this->component.m_resetRequested.load());
+}
+
+void DoomEngineTester::testResetCommandSetsFlag() {
+    // Reset on a created engine latches the request for the rate-group
+    // thread and responds OK; the EngineReset event is emitted only
+    // when the tick applies it.
+    this->component.m_engineCreated = true;
+    this->sendCmd_Reset(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RESET, 0, Fw::CmdResponse::OK);
+    ASSERT_EVENTS_ResetNotStarted_SIZE(0);
+    ASSERT_EVENTS_EngineReset_SIZE(0);
+    ASSERT_TRUE(this->component.m_resetRequested.load());
+    this->component.m_resetRequested.store(false);
+    this->component.m_engineCreated = false;
+}
+
 void DoomEngineTester::testSchedInWhenEngineOff() {
     this->invoke_to_schedIn(0, 0);
     // No FrameOutNN channel should be emitted when the engine is off.
