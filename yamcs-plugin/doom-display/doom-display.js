@@ -77,6 +77,12 @@ class DoomDisplay {
         this.websocket = null;
         this.statusText = "connecting...";
         this.statusLine = null;
+        // .seq command recorder: while recording, every command sent
+        // from this panel is captured with a timestamp; stop-recording
+        // downloads them as an F Prime .seq sequence file.
+        this.recording = false;
+        this.recorded = [];   // {timeMs, qualifiedName, args: {..}}
+        this.recordStartMs = 0;
         // FPS measurement over a rolling one-second window
         this.fpsWindowStart = performance.now();
         this.fpsWindowFrames = 0;
@@ -188,7 +194,7 @@ class DoomDisplay {
             return;
         }
         const prefix = match.qualifiedName.slice(0, -"KeyDown".length);
-        for (const suffix of ["KeyDown", "KeyUp", "Start", "Stop"]) {
+        for (const suffix of ["KeyDown", "KeyUp", "Start", "Stop", "Reset"]) {
             this.commands[suffix] = prefix + suffix;
         }
     }
@@ -316,6 +322,13 @@ class DoomDisplay {
         if (!qualifiedName) {
             return;
         }
+        if (this.recording) {
+            this.recorded.push({
+                timeMs: performance.now() - this.recordStartMs,
+                qualifiedName: qualifiedName,
+                args: args || {},
+            });
+        }
         const encodedName = qualifiedName.split("/").map(encodeURIComponent).join("/");
         fetch("/api/processors/" + encodeURIComponent(this.instance) + "/realtime/commands"
             + encodedName, {
@@ -357,6 +370,59 @@ class DoomDisplay {
         }
     }
 
+    startRecording() {
+        this.recording = true;
+        this.recorded = [];
+        this.recordStartMs = performance.now();
+    }
+
+    stopRecording() {
+        this.recording = false;
+        this.downloadSeqFile(this.buildSeqFile(this.recorded));
+        this.recorded = [];
+    }
+
+    /**
+     * Render recorded commands as an F Prime .seq file (the format
+     * consumed by fprime-seqgen / Svc.CmdSequencer). Each line is
+     *   R<HH>:<MM>:<SS>.<mmm> <full.command.mnemonic> <args...>
+     * with R-times relative to the previous command. The mnemonic is
+     * the YAMCS qualified name minus the root SpaceSystem, joined with
+     * dots - the inverse of what fprime-to-xtce does when it nests
+     * SpaceSystems from the dotted F Prime dictionary name.
+     */
+    buildSeqFile(recorded) {
+        const lines = [
+            "; DOOM command sequence recorded by doom-display on "
+                + new Date().toISOString(),
+            ";",
+        ];
+        let previousMs = 0;
+        for (const entry of recorded) {
+            const mnemonic = entry.qualifiedName.split("/").filter(Boolean)
+                .slice(1).join(".");
+            const argText = Object.values(entry.args)
+                .map((value) => formatSeqArg(value)).join(" ");
+            const deltaMs = Math.max(0, Math.round(entry.timeMs - previousMs));
+            previousMs = entry.timeMs;
+            lines.push(relativeTimeTag(deltaMs) + " " + mnemonic
+                + (argText ? " " + argText : ""));
+        }
+        return lines.join("\n") + "\n";
+    }
+
+    downloadSeqFile(text) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const anchor = document.createElement("a");
+        const url = URL.createObjectURL(new Blob([text], {type: "text/plain"}));
+        anchor.href = url;
+        anchor.download = "doom-recording-" + stamp + ".seq";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+    }
+
     buildPanel(onClose) {
         const panel = document.createElement("div");
         panel.style.cssText = "position:fixed;bottom:56px;right:12px;z-index:10000;"
@@ -373,14 +439,46 @@ class DoomDisplay {
 
         const controls = document.createElement("div");
         controls.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px;";
-        for (const [label, suffix] of [["Start", "Start"], ["Stop", "Stop"]]) {
-            const button = document.createElement("button");
-            button.textContent = label;
-            button.style.cssText = "background:#333;color:#eee;border:1px solid #555;"
-                + "border-radius:3px;padding:2px 10px;cursor:pointer;";
-            button.onclick = () => this.sendCommand(suffix, {});
-            controls.appendChild(button);
-        }
+        const buttonCss = "background:#333;color:#eee;border:1px solid #555;"
+            + "border-radius:3px;padding:2px 10px;cursor:pointer;";
+
+        // Start <-> Stop toggle. Tracks panel-side intent only; it does
+        // not follow State telemetry.
+        const startStop = document.createElement("button");
+        startStop.textContent = "Start";
+        startStop.style.cssText = buttonCss;
+        startStop.onclick = () => {
+            const starting = startStop.textContent === "Start";
+            this.sendCommand(starting ? "Start" : "Stop", {});
+            startStop.textContent = starting ? "Stop" : "Start";
+        };
+        controls.appendChild(startStop);
+
+        const reset = document.createElement("button");
+        reset.textContent = "Reset";
+        reset.title = "Reset the game back to its initial (title screen) state";
+        reset.style.cssText = buttonCss;
+        reset.onclick = () => this.sendCommand("Reset", {});
+        controls.appendChild(reset);
+
+        // Record <-> Stop Recording toggle; stopping downloads the .seq.
+        const record = document.createElement("button");
+        record.textContent = "Record";
+        record.title = "Record commands sent from this panel into a .seq sequence file";
+        record.style.cssText = buttonCss;
+        record.onclick = () => {
+            if (this.recording) {
+                this.stopRecording();
+                record.textContent = "Record";
+                record.style.background = "#333";
+            } else {
+                this.startRecording();
+                record.textContent = "Stop Recording";
+                record.style.background = "#770000";
+            }
+        };
+        controls.appendChild(record);
+
         const hint = document.createElement("span");
         hint.textContent = "click canvas to focus; WASD/arrows/Space/Ctrl";
         hint.style.color = "#888";
@@ -527,6 +625,29 @@ class DoomDisplay {
         document.body.appendChild(launcher);
         this.start();
     }
+}
+
+function formatSeqArg(value) {
+    if (typeof value === "string") {
+        // Enum labels (e.g. DoomKey UP) are bare identifiers; anything
+        // else is emitted as a quoted string argument.
+        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : '"' + value + '"';
+    }
+    if (typeof value === "boolean") {
+        return value ? "TRUE" : "FALSE";
+    }
+    return String(value);
+}
+
+function relativeTimeTag(deltaMs) {
+    const totalSeconds = Math.floor(deltaMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const millis = deltaMs % 1000;
+    const pad = (n, w) => String(n).padStart(w, "0");
+    return "R" + pad(hours, 2) + ":" + pad(minutes, 2) + ":" + pad(seconds, 2)
+        + "." + pad(millis, 3);
 }
 
 function base64ToBytes(base64) {

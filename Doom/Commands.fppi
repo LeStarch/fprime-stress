@@ -57,3 +57,14 @@ sync command RawKey(
 @ behind an in-flight Start (worst case: first-Start bring-up).
 sync command Stop \
   opcode 5
+
+@ Reset the game back to its initial state (the title / attract
+@ screen shown on a fresh boot). The reset is applied by the
+@ rate-group thread on its next tick: the pending key queue is
+@ flushed, any in-flight screen-wipe playback is discarded, and the
+@ engine returns to the title sequence via its own start-title
+@ machinery. The engine itself is not torn down (the vendored engine
+@ has no clean shutdown path). Responds EXECUTION_ERROR if the
+@ engine has never been started.
+sync command Reset \
+  opcode 6
