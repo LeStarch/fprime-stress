@@ -83,6 +83,10 @@ class DoomDisplay {
         this.recording = false;
         this.recorded = [];   // {timeMs, qualifiedName, args: {..}}
         this.recordStartMs = 0;
+        // Panel-side engine intent (last Start/Stop sent from here).
+        // Toggle state lives on the instance, not the panel DOM, so
+        // closing and reopening the panel preserves button labels.
+        this.engineStarted = false;
         // FPS measurement over a rolling one-second window
         this.fpsWindowStart = performance.now();
         this.fpsWindowFrames = 0;
@@ -443,14 +447,18 @@ class DoomDisplay {
             + "border-radius:3px;padding:2px 10px;cursor:pointer;";
 
         // Start <-> Stop toggle. Tracks panel-side intent only; it does
-        // not follow State telemetry.
+        // not follow State telemetry. The label reflects this.engineStarted
+        // so it survives the panel being closed and reopened.
         const startStop = document.createElement("button");
-        startStop.textContent = "Start";
+        const paintStartStop = () => {
+            startStop.textContent = this.engineStarted ? "Stop" : "Start";
+        };
+        paintStartStop();
         startStop.style.cssText = buttonCss;
         startStop.onclick = () => {
-            const starting = startStop.textContent === "Start";
-            this.sendCommand(starting ? "Start" : "Stop", {});
-            startStop.textContent = starting ? "Stop" : "Start";
+            this.engineStarted = !this.engineStarted;
+            this.sendCommand(this.engineStarted ? "Start" : "Stop", {});
+            paintStartStop();
         };
         controls.appendChild(startStop);
 
@@ -462,20 +470,23 @@ class DoomDisplay {
         controls.appendChild(reset);
 
         // Record <-> Stop Recording toggle; stopping downloads the .seq.
+        // Recording continues while the panel is closed; the rebuilt
+        // button reflects this.recording.
         const record = document.createElement("button");
-        record.textContent = "Record";
+        const paintRecord = () => {
+            record.textContent = this.recording ? "Stop Recording" : "Record";
+            record.style.background = this.recording ? "#770000" : "#333";
+        };
         record.title = "Record commands sent from this panel into a .seq sequence file";
         record.style.cssText = buttonCss;
+        paintRecord();
         record.onclick = () => {
             if (this.recording) {
                 this.stopRecording();
-                record.textContent = "Record";
-                record.style.background = "#333";
             } else {
                 this.startRecording();
-                record.textContent = "Stop Recording";
-                record.style.background = "#770000";
             }
+            paintRecord();
         };
         controls.appendChild(record);
 
