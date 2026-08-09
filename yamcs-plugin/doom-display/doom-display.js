@@ -8,7 +8,10 @@
  *
  * which injects this file as a module script into every yamcs-web page.
  * The extension adds a floating "DOOM" launcher button; clicking it opens
- * an overlay panel with the rendered frame stream and keyboard controls.
+ * a floating panel with the rendered frame stream and keyboard controls.
+ * The panel behaves like a window: drag its title bar to move it, drag
+ * the bottom-right corner to resize it (the canvas scales with it), and
+ * use the title-bar buttons to minimize it to its title bar or close it.
  *
  * Data path: a WebSocket "packets" subscription on the tm_realtime stream
  * delivers every raw downlinked space packet (base64). Packetized
@@ -354,11 +357,19 @@ class DoomDisplay {
         }
     }
 
-    buildPanel() {
+    buildPanel(onClose) {
         const panel = document.createElement("div");
         panel.style.cssText = "position:fixed;bottom:56px;right:12px;z-index:10000;"
             + "background:#1a1a1a;border:2px solid #770000;border-radius:6px;padding:8px;"
-            + "box-shadow:0 4px 24px rgba(0,0,0,0.6);font:12px monospace;color:#ccc;";
+            + "box-shadow:0 4px 24px rgba(0,0,0,0.6);font:12px monospace;color:#ccc;"
+            + "display:flex;flex-direction:column;resize:both;overflow:hidden;"
+            + "min-width:240px;min-height:32px;max-width:95vw;max-height:95vh;";
+
+        panel.appendChild(this.buildTitleBar(panel, onClose));
+
+        const body = document.createElement("div");
+        body.style.cssText = "display:flex;flex-direction:column;flex:1;min-height:0;";
+        this.panelBody = body;
 
         const controls = document.createElement("div");
         controls.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px;";
@@ -374,28 +385,114 @@ class DoomDisplay {
         hint.textContent = "click canvas to focus; WASD/arrows/Space/Ctrl";
         hint.style.color = "#888";
         controls.appendChild(hint);
-        panel.appendChild(controls);
+        body.appendChild(controls);
 
         const canvas = document.createElement("canvas");
         canvas.width = FRAME_WIDTH;
         canvas.height = FRAME_HEIGHT;
         canvas.tabIndex = 0;
-        canvas.style.cssText = "display:block;width:" + FRAME_WIDTH + "px;height:"
-            + FRAME_HEIGHT + "px;background:#000;outline:none;image-rendering:pixelated;";
+        // The canvas backing store stays at the native DOOM resolution;
+        // CSS scales it to fill whatever size the panel is resized to,
+        // preserving the 16:10 aspect ratio.
+        canvas.style.cssText = "display:block;flex:1;min-height:0;width:100%;"
+            + "background:#000;outline:none;image-rendering:pixelated;"
+            + "object-fit:contain;";
         canvas.onclick = () => canvas.focus();
         canvas.onkeydown = (event) => this.onKeyDown(event);
         canvas.onkeyup = (event) => this.onKeyUp(event);
         canvas.onblur = () => this.releaseHeldKeys();
-        panel.appendChild(canvas);
+        body.appendChild(canvas);
         this.canvas = canvas;
 
         const statusLine = document.createElement("div");
-        statusLine.style.cssText = "margin-top:4px;color:#888;";
+        statusLine.style.cssText = "margin-top:4px;color:#888;flex:none;";
         statusLine.textContent = this.statusText;
-        panel.appendChild(statusLine);
+        body.appendChild(statusLine);
         this.statusLine = statusLine;
 
+        panel.appendChild(body);
+        // Initial size: native canvas plus panel chrome.
+        panel.style.width = (FRAME_WIDTH + 20) + "px";
+        panel.style.height = (FRAME_HEIGHT + 76) + "px";
         return panel;
+    }
+
+    buildTitleBar(panel, onClose) {
+        const bar = document.createElement("div");
+        bar.style.cssText = "display:flex;align-items:center;gap:6px;flex:none;"
+            + "margin:-8px -8px 6px -8px;padding:4px 8px;background:#550000;"
+            + "color:#fff;cursor:move;user-select:none;touch-action:none;";
+
+        const title = document.createElement("span");
+        title.textContent = "DOOM";
+        title.style.cssText = "font-weight:bold;flex:1;";
+        bar.appendChild(title);
+
+        let minimized = false;
+        let restoreHeight = null;
+        const minimize = document.createElement("button");
+        minimize.textContent = "\u2013";
+        minimize.title = "Minimize to title bar";
+        const close = document.createElement("button");
+        close.textContent = "\u00d7";
+        close.title = "Close";
+        for (const button of [minimize, close]) {
+            button.style.cssText = "background:#772222;color:#fff;border:1px solid #995555;"
+                + "border-radius:3px;width:22px;height:18px;line-height:1;cursor:pointer;"
+                + "font:bold 12px monospace;padding:0;";
+        }
+        minimize.onclick = () => {
+            minimized = !minimized;
+            if (minimized) {
+                restoreHeight = panel.style.height;
+                this.panelBody.style.display = "none";
+                panel.style.resize = "none";
+                panel.style.height = "auto";
+            } else {
+                this.panelBody.style.display = "flex";
+                panel.style.resize = "both";
+                panel.style.height = restoreHeight;
+            }
+            minimize.textContent = minimized ? "\u25a1" : "\u2013";
+            minimize.title = minimized ? "Restore" : "Minimize to title bar";
+        };
+        close.onclick = () => onClose();
+        bar.appendChild(minimize);
+        bar.appendChild(close);
+
+        // Drag-to-move. The panel is created anchored bottom/right; on
+        // first drag it is re-anchored top/left so it moves freely.
+        bar.addEventListener("pointerdown", (event) => {
+            if (event.target !== bar && event.target !== title) {
+                return;
+            }
+            event.preventDefault();
+            const rect = panel.getBoundingClientRect();
+            panel.style.left = rect.left + "px";
+            panel.style.top = rect.top + "px";
+            panel.style.right = "auto";
+            panel.style.bottom = "auto";
+            const offsetX = event.clientX - rect.left;
+            const offsetY = event.clientY - rect.top;
+            const onMove = (move) => {
+                const width = panel.offsetWidth;
+                const barHeight = bar.offsetHeight;
+                const left = Math.min(Math.max(move.clientX - offsetX, 8 - width),
+                                      window.innerWidth - 8);
+                const top = Math.min(Math.max(move.clientY - offsetY, 0),
+                                     window.innerHeight - barHeight);
+                panel.style.left = left + "px";
+                panel.style.top = top + "px";
+            };
+            const onUp = () => {
+                window.removeEventListener("pointermove", onMove);
+                window.removeEventListener("pointerup", onUp);
+            };
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onUp);
+        });
+
+        return bar;
     }
 
     install() {
@@ -407,18 +504,24 @@ class DoomDisplay {
             + "padding:6px 14px;font:bold 13px monospace;cursor:pointer;"
             + "box-shadow:0 2px 8px rgba(0,0,0,0.5);";
         let panel = null;
-        launcher.onclick = () => {
-            if (panel == null) {
-                panel = this.buildPanel();
-                document.body.appendChild(panel);
-                this.frameDirty = true;
-                this.draw();
-            } else {
+        const closePanel = () => {
+            if (panel != null) {
                 panel.remove();
                 panel = null;
                 this.canvas = null;
                 this.statusLine = null;
+                this.panelBody = null;
                 this.imageData = null;
+            }
+        };
+        launcher.onclick = () => {
+            if (panel == null) {
+                panel = this.buildPanel(closePanel);
+                document.body.appendChild(panel);
+                this.frameDirty = true;
+                this.draw();
+            } else {
+                closePanel();
             }
         };
         document.body.appendChild(launcher);
