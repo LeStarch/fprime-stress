@@ -217,7 +217,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_paletteGeneration;
 
     //! Total frames produced by the engine.
-    U32 m_framesProduced;
+    FwSizeType m_framesProduced;
 
     //! Last state published via publishState; the not-running
     //! heartbeat re-emits it (preserving FAILED) except a stale

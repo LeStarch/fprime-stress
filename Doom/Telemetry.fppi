@@ -255,8 +255,9 @@ telemetry FrameOut78: Doom.FrameChunk id 78
 @ Frame scanlines [395..399] of the latest DOOM frame.
 telemetry FrameOut79: Doom.FrameChunk id 79
 
-@ Monotonically increasing count of frames the engine has produced.
-telemetry FrameCount: U32 id 80
+@ Monotonically increasing count of frames the engine has produced
+@ and sent as FrameOutNN telemetry.
+telemetry FrameCount: FwSizeType id 80
 
 @ Current DOOM 256-entry RGB palette. Emitted with every frame so a
 @ late-attaching ground system converges on the active palette.

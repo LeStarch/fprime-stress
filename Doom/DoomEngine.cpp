@@ -516,7 +516,7 @@ void DoomEngine::platformDrawFrame() {
         if (m_meltCount < MELT_QUEUE_CAPACITY) {
             const FwSizeType slot = (m_meltHead + m_meltCount) % MELT_QUEUE_CAPACITY;
             (void)::memcpy(m_meltFrames[slot], src, FRAME_BYTES);
-            m_meltFrameNumbers[slot] = m_framesProduced;
+            m_meltFrameNumbers[slot] = static_cast<U32>(m_framesProduced);
             m_meltCount++;
         } else {
             // Buffer full: the frame is neither emitted nor buffered.
@@ -525,7 +525,7 @@ void DoomEngine::platformDrawFrame() {
         return;
     }
 
-    this->emitFrame(src, m_framesProduced);
+    this->emitFrame(src, static_cast<U32>(m_framesProduced));
 }
 
 void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
