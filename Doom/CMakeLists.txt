@@ -165,7 +165,9 @@ if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp")
         "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameDownsamplerTester.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameDownsamplerTests.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTests.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTestMain.cpp"
     )
     set(UT_HEADER_FILES
