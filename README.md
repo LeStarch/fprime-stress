@@ -75,8 +75,12 @@ flowchart LR
     D -- "/2 = 35 Hz" --> S1
     S1 -- schedIn --> DE
     CS -- key cmds / parallel ports --> DE
-    DE -- FrameOut chunks --> TC
-    DE -- PaletteOut --> TC
+    DE -- "frameOut (Fw.Buffer)" --> DS[FrameDownsampler]
+    DE -- paletteOut --> DS
+    DS -- "downsampled frame" --> TP[FrameTlmProcessor]
+    DS -- paletteOut --> TP
+    TP -- "FrameRowNNN rows" --> TC
+    TP -- PaletteOut --> TC
     DE -- FrameRateHz<br/>FrameDataRateBps<br/>InputCommandRateHz<br/>InputDataRateBps --> TC
     TC --> CCSDS --> NET --> GDS
     KBD -- HTTP --> CS
@@ -87,32 +91,38 @@ flowchart LR
 DOOM's frame buffer (640 × 400 palette-indexed pixels = **256 kB per
 frame**) is too large to ship as a single FPP telemetry sample
 under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (4 kB by default).
-We chunk it: each `Doom.FrameChunk` carries five complete scan lines
-(5 × 640 = 3,200 bytes of pixel data) plus a small header. Eighty
-chunks per frame, 35 frames per second (DOOM's native cadence),
-2,800 chunks per second of sustained downlink — every one of those
-is a real F Prime message flowing through the real F Prime telemetry
-pipeline.
+The engine sends the complete frame out a synchronous `Doom.RawFrame`
+port as an `Fw::Buffer`; a passive `FrameDownsampler` decimates it in
+place by a runtime-parameterized power-of-two factor (`DOWNSAMPLE`:
+X1..X16, default X2), and a passive `FrameTlmProcessor` emits one
+`Doom.FrameRow` telemetry channel per downsampled scanline. At the
+default X2 (320 × 200) that is 200 rows per frame, 35 frames per
+second (DOOM's native cadence), 7,000 rows per second of sustained
+downlink — every one of those is a real F Prime message flowing
+through the real F Prime telemetry pipeline. The whole path is
+synchronous on the rate-group thread and allocation-free: the
+downsampler strides over the engine-owned buffer and packs retained
+pixels toward its front, forwarding the same data pointer.
 
 A load-bearing observation from running this at full rate: `TlmChan`
 is a slot-store — it retains only the most recent value per channel
-id between Run ticks. The original implementation wrote 80 chunks
-per cycle to a single channel id (`FrameOut`); only the
-bottom-of-frame chunk survived to ground each Run tick and the
-browser canvas accordingly only painted the HUD strip. The frame
-data was real, but the per-channel sampling rate was throttled to
-the Run rate by the slot store collapsing 79 of every 80 writes.
+id between Run ticks. An implementation writing every row to a single
+channel id would see only the bottom-of-frame row survive to ground
+each Run tick and the browser canvas would only paint the HUD strip.
+The frame data would be real, but the per-channel sampling rate would
+be throttled to the Run rate by the slot store collapsing the writes.
 
-This deployment therefore multiplexes frame data across 80 distinct
-telemetry channel ids (`FrameOut00` … `FrameOut79`), one per
-scanline group of `ROWS_PER_CHUNK` rows. Each chunk position has
-its own slot, so a single cycle produces 80 surviving samples
-instead of one. A function-pointer dispatch table in
-`DoomEngine::emitFrame` (invoked from `platformDrawFrame`) maps the chunk index to the
-matching `tlmWrite_FrameOutNN` member function so the per-cycle
-loop stays a tight `for` over the chunk count. The browser plugin
-subscribes to all 80 channel ids and reassembles the full 640×400
-frame as cycles arrive — the multiplex is the same pattern a real
+This deployment therefore multiplexes frame data across 400 distinct
+telemetry channel ids (`FrameRow000` … `FrameRow399`), one per
+scanline. Each row position has its own slot, so a single cycle
+produces one surviving sample per row instead of one per frame. A
+function-pointer dispatch table in `FrameTlmProcessor` maps the row
+index to the matching `tlmWrite_FrameRowNNN` member function so the
+per-cycle loop stays a tight `for` over the downsampled height —
+only rows `0..height-1` are emitted, so an X2 frame touches 200
+channels and an X16 frame touches 25. The browser plugin subscribes
+to all 400 channel ids and reassembles the downsampled frame as
+cycles arrive — the multiplex is the same pattern a real
 flight payload streaming frame-rate imagery would use, and is the
 proper alternative to `Svc.FileDownlink` for bulk transfer when
 ground display latency matters.
@@ -289,8 +299,9 @@ pin used to verify mirror downloads.
 The first time a frame of DOOM rendered out of an F Prime telemetry
 channel was, scientifically speaking, an enormous proof that F Prime
 is the right shape of framework for hard-real-time embedded software.
-Pacing the rate group at 35 Hz, packing the frame buffer into 80
-`FrameChunk` samples a frame, holding ~8 MB/s of sustained downlink
+Pacing the rate group at 35 Hz, downsampling the frame buffer in
+place and packing it into per-scanline `FrameRow` samples, holding
+megabytes per second of sustained downlink
 through the CCSDS framer, and round-tripping keystrokes from a
 browser through the command dispatcher to the engine — none of it
 needed any framework changes. F Prime just *did* it.

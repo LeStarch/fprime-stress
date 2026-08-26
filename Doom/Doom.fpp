@@ -4,30 +4,17 @@ module Doom {
   # Frame dimensions
   #
   # The wrapped DOOM engine runs at a fixed 640 x 400 palette-indexed
-  # resolution. Frames are streamed down as a sequence of FrameChunk
-  # telemetry samples, each carrying a contiguous run of complete rows.
-  # At DOOM's native 35 Hz this is 80 chunks * 3200 B * 35 Hz ~ 8.6 MB/s
-  # of sustained downlink telemetry - a deliberately punishing stress
-  # workload.
+  # resolution. The engine hands each full frame to a downsampler over
+  # a synchronous RawFrame port; the downsampler decimates it in place
+  # and forwards it to a telemetry processor that emits one FrameRow
+  # telemetry channel per scanline of the (possibly reduced) frame.
   # ----------------------------------------------------------------------
 
-  @ Width of the DOOM frame in pixels.
+  @ Width of the full-resolution DOOM frame in pixels.
   constant FRAME_WIDTH = 640
 
-  @ Height of the DOOM frame in scanlines.
+  @ Height of the full-resolution DOOM frame in scanlines.
   constant FRAME_HEIGHT = 400
-
-  @ Number of rows packed into a single FrameChunk telemetry sample.
-  @ FRAME_WIDTH * ROWS_PER_CHUNK + FrameChunk header must fit inside
-  @ FW_COM_BUFFER_MAX_SIZE (4096 in this project). 5 * 640 = 3200 B.
-  constant ROWS_PER_CHUNK = 5
-
-  @ Number of palette-indexed pixel bytes per FrameChunk.
-  constant FRAME_CHUNK_BYTES = 3200
-
-  @ Number of FrameChunk samples emitted to downlink one complete frame.
-  @ FRAME_HEIGHT (400) / ROWS_PER_CHUNK (5) = 80.
-  constant CHUNKS_PER_FRAME = 80
 
   @ Number of palette bytes (256 entries * 3 bytes per RGB triple).
   constant PALETTE_BYTES = 768
@@ -36,21 +23,19 @@ module Doom {
   # Telemetry struct types
   # ----------------------------------------------------------------------
 
-  @ A contiguous block of DOOM frame scanlines. The component emits
-  @ CHUNKS_PER_FRAME of these per displayed frame, each carrying
-  @ ROWS_PER_CHUNK rows of FRAME_WIDTH palette indices.
-  struct FrameChunk {
-    @ Monotonically increasing frame counter set by the component.
+  @ One scanline of the (possibly downsampled) DOOM frame. The pixel
+  @ array is sized for the full-resolution width; `width` gives the
+  @ number of valid leading pixels at the active downsample factor.
+  struct FrameRow {
+    @ Monotonically increasing frame counter set by the engine.
     frame: U32
-    @ Index of the first scanline contained in this chunk (0..FRAME_HEIGHT-1).
+    @ Scanline index within the downsampled frame (0..height-1).
     row: U16
-    @ Number of scanlines packed in this chunk.
-    rowCount: U16
-    @ Width in pixels of each row in this chunk.
+    @ Width in pixels of this row. Only the first `width` bytes of
+    @ `pixels` are valid; trailing bytes are zero.
     width: U16
-    @ Palette-indexed pixel data, laid out row-major. Only the first
-    @ rowCount * width bytes are valid; trailing bytes are zero.
-    pixels: [Doom.FRAME_CHUNK_BYTES] U8
+    @ Palette-indexed pixel data for this scanline.
+    pixels: [Doom.FRAME_WIDTH] U8
   }
 
   @ The active DOOM palette as a flat RGB byte array. Emitted with
@@ -62,6 +47,21 @@ module Doom {
     @ 256 RGB triples, packed R0,G0,B0,R1,G1,B1,...
     rgb: [Doom.PALETTE_BYTES] U8
   }
+
+  # ----------------------------------------------------------------------
+  # Downsampling
+  # ----------------------------------------------------------------------
+
+  @ Downsample factor applied to each frame dimension. Restricted to
+  @ powers of 2 that divide both FRAME_WIDTH (640) and FRAME_HEIGHT
+  @ (400) evenly (32 would give a fractional height).
+  enum DownsampleFactor : U8 {
+    X1  = 1   @< 640 x 400 pass-through
+    X2  = 2   @< 320 x 200
+    X4  = 4   @< 160 x 100
+    X8  = 8   @<  80 x  50
+    X16 = 16  @<  40 x  25
+  } default X2
 
   # ----------------------------------------------------------------------
   # Engine state enums
@@ -131,12 +131,28 @@ module Doom {
                     code: U8
                   )
 
+  @ Synchronous frame hand-off. `pixels` wraps caller-owned storage of
+  @ width * height palette indices, valid (and mutable by the callee)
+  @ only for the duration of the port call. No ownership transfer.
+  port RawFrame(
+                 frameNumber: U32
+                 width: U16
+                 height: U16
+                 ref pixels: Fw.Buffer
+               )
+
+  @ Synchronous palette hand-off, sent whenever a frame is sent.
+  port PaletteSend(
+                    palette: Doom.Palette
+                  )
+
   # ----------------------------------------------------------------------
   # Component
   # ----------------------------------------------------------------------
 
-  @ Single component wrapping the open-source DOOM engine. Frames are
-  @ pushed down as FrameChunk telemetry; ground inputs arrive as
+  @ Single component wrapping the open-source DOOM engine. Each full
+  @ frame is pushed out the frameOut RawFrame port from engine-owned
+  @ storage (no allocation); ground inputs arrive as
   @ KeyTap/KeyDown/KeyUp/RawKey commands and are converted into queue
   @ entries the engine consumes through its DG_GetKey hook.
   @
@@ -186,6 +202,18 @@ module Doom {
 
     @ Raw press-or-release with an arbitrary key code.
     sync input port rawKeyIn: Doom.RawKeyEvent
+
+    # ------------------------------------------------------------------
+    # Frame output
+    # ------------------------------------------------------------------
+
+    @ Full-resolution frame hand-off, invoked synchronously once per
+    @ emitted frame from the rate-group thread. The buffer wraps the
+    @ engine's own frame storage and is valid only during the call.
+    output port frameOut: Doom.RawFrame
+
+    @ Active palette, sent before each frameOut invocation.
+    output port paletteOut: Doom.PaletteSend
 
     # ------------------------------------------------------------------
     # Standard component interfaces

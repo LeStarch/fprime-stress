@@ -4,6 +4,8 @@
 // ======================================================================
 
 #include "Doom/test/ut/DoomEngineTester.hpp"
+#include "Doom/test/ut/FrameDownsamplerTester.hpp"
+#include "Doom/test/ut/FrameTlmProcessorTester.hpp"
 
 #include <memory>
 
@@ -131,6 +133,83 @@ TEST(OffNominal, ForceStartWhenAlreadyRunning) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
     tester->testForceStartWhenAlreadyRunning();
+}
+
+TEST(Nominal, VariableRateContextAdvancesClock) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testVariableRateContextAdvancesClock();
+}
+
+TEST(Downsampler, PassThroughAtX1) {
+    // Heap-allocated: the frame buffers are too large for the stack.
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testPassThroughAtX1();
+}
+
+TEST(Downsampler, DecimatesInPlaceX2) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testDecimatesInPlace(Doom::DownsampleFactor::X2);
+}
+
+TEST(Downsampler, DecimatesInPlaceX4) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testDecimatesInPlace(Doom::DownsampleFactor::X4);
+}
+
+TEST(Downsampler, DecimatesInPlaceX8) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testDecimatesInPlace(Doom::DownsampleFactor::X8);
+}
+
+TEST(Downsampler, DecimatesInPlaceX16) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testDecimatesInPlace(Doom::DownsampleFactor::X16);
+}
+
+TEST(Downsampler, ForwardsPalette) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testForwardsPalette();
+}
+
+TEST(Downsampler, RejectsIndivisibleDimensions) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testRejectsIndivisibleDimensions();
+}
+
+TEST(Downsampler, RejectsShortBuffer) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testRejectsShortBuffer();
+}
+
+TEST(Downsampler, DefaultsToX2WhenParamUnset) {
+    auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
+    tester->testDefaultsToX2WhenParamUnset();
+}
+
+TEST(TlmProcessor, EmitsOneChannelPerRow) {
+    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
+    tester->testEmitsOneChannelPerRow();
+}
+
+TEST(TlmProcessor, EmitsFullResolutionRows) {
+    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
+    tester->testEmitsFullResolutionRows();
+}
+
+TEST(TlmProcessor, ReEmitsPalette) {
+    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
+    tester->testReEmitsPalette();
+}
+
+TEST(TlmProcessor, RejectsOversizedDimensions) {
+    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
+    tester->testRejectsOversizedDimensions();
+}
+
+TEST(TlmProcessor, RejectsShortBuffer) {
+    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
+    tester->testRejectsShortBuffer();
 }
 
 int main(int argc, char** argv) {

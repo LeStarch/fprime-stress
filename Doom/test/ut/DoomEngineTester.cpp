@@ -27,6 +27,24 @@ DoomEngineTester::~DoomEngineTester() {
 // Helpers
 // ----------------------------------------------------------------------
 
+void DoomEngineTester::from_frameOut_handler(FwIndexType portNum,
+                                             U32 frameNumber,
+                                             U16 width,
+                                             U16 height,
+                                             Fw::Buffer& pixels) {
+    this->pushFromPortEntry_frameOut(frameNumber, width, height, pixels);
+    if (m_frameCaptureCount < MAX_FRAME_CAPTURES) {
+        FrameCapture& cap = m_frameCaptures[m_frameCaptureCount];
+        cap.frameNumber = frameNumber;
+        cap.width = width;
+        cap.height = height;
+        cap.size = static_cast<U32>(pixels.getSize());
+        const U32 copyBytes = FW_MIN(cap.size, static_cast<U32>(sizeof(cap.pixels)));
+        (void)::memcpy(cap.pixels, pixels.getData(), copyBytes);
+    }
+    m_frameCaptureCount++;
+}
+
 FwSizeType DoomEngineTester::drainKeys(bool* pressedOut, U8* codeOut, FwSizeType maxEvents) {
     FwSizeType drained = 0;
     while (drained < maxEvents) {
@@ -209,7 +227,7 @@ void DoomEngineTester::testSchedInAppliesReset() {
     ASSERT_EQ(this->component.m_meltCount, 0u);
     ASSERT_EQ(this->component.m_meltHead, 0u);
     // The reset tick neither plays back a melt frame nor ticks DOOM.
-    ASSERT_TLM_FrameOut00_SIZE(0);
+    ASSERT_EQ(this->m_frameCaptureCount, 0u);
     ASSERT_TLM_KeyQueueDepth_SIZE(1);
     ASSERT_TLM_KeyQueueDepth(0, 0u);
 
@@ -231,10 +249,9 @@ void DoomEngineTester::testSchedInAppliesReset() {
 
 void DoomEngineTester::testSchedInWhenEngineOff() {
     this->invoke_to_schedIn(0, 0);
-    // No FrameOutNN channel should be emitted when the engine is off.
-    // FrameOut is multiplexed across 80 channel ids; FrameOut00 is the
-    // representative cell.
-    ASSERT_TLM_FrameOut00_SIZE(0);
+    // No frame should be sent out the frameOut port when the engine
+    // is off.
+    ASSERT_EQ(this->m_frameCaptureCount, 0u);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_EVENTS_EngineStopped_SIZE(0);
     // The handler still publishes the OFF-state heartbeat.
@@ -251,6 +268,28 @@ void DoomEngineTester::testVirtualSleepAdvancesTicks() {
     ASSERT_EQ(this->component.platformGetTicksMs(), 10U);
 }
 
+void DoomEngineTester::testVariableRateContextAdvancesClock() {
+    // Context 0 keeps the OS clock; a nonzero context (microseconds
+    // per tick) switches the engine clock to accumulated tick time.
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_FALSE(this->component.m_useTickTime);
+
+    // Ten ticks at 100 Hz = 100 ms of virtual time.
+    for (U32 i = 0; i < 10U; i++) {
+        this->invoke_to_schedIn(0, 10000U);
+    }
+    ASSERT_TRUE(this->component.m_useTickTime);
+    ASSERT_EQ(this->component.platformGetTicksMs(), 100U);
+
+    // Virtual sleep still layers on top of the tick clock.
+    this->component.platformSleepMs(5U);
+    ASSERT_EQ(this->component.platformGetTicksMs(), 105U);
+
+    // A later context-0 tick does not advance or rewind the clock.
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_EQ(this->component.platformGetTicksMs(), 105U);
+}
+
 void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
     static U8 buf[DoomEngine::FRAME_BYTES];
     for (U32 i = 0; i < DoomEngine::FRAME_BYTES; ++i) {
@@ -260,13 +299,16 @@ void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
 
     // First draw of a tick is emitted live, with the active palette.
     this->component.platformDrawFrame();
-    ASSERT_TLM_FrameOut00_SIZE(1);
-    ASSERT_EQ(this->tlmHistory_FrameOut00->at(0).arg.get_frame(), 1U);
-    ASSERT_TLM_PaletteOut_SIZE(1);
+    ASSERT_EQ(this->m_frameCaptureCount, 1u);
+    ASSERT_EQ(this->m_frameCaptures[0].frameNumber, 1U);
+    ASSERT_EQ(this->m_frameCaptures[0].width, +DoomEngine::FRAME_WIDTH);
+    ASSERT_EQ(this->m_frameCaptures[0].height, +DoomEngine::FRAME_HEIGHT);
+    ASSERT_EQ(this->m_frameCaptures[0].size, +DoomEngine::FRAME_BYTES);
+    ASSERT_from_paletteOut_SIZE(1);
 
     // Second draw of the same tick is buffered, not emitted.
     this->component.platformDrawFrame();
-    ASSERT_TLM_FrameOut00_SIZE(1);
+    ASSERT_EQ(this->m_frameCaptureCount, 1u);
     ASSERT_EQ(this->component.m_meltCount, 1U);
     ASSERT_EQ(this->component.m_meltFrameNumbers[0], 2U);
 
@@ -284,7 +326,7 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     // Capture one melt frame (first draw emits, second buffers).
     this->component.platformDrawFrame();
     this->component.platformDrawFrame();
-    ASSERT_TLM_FrameOut00_SIZE(1);
+    ASSERT_EQ(this->m_frameCaptureCount, 1u);
     ASSERT_EQ(this->component.m_meltCount, 1U);
 
     // Drive schedIn with the engine "running" via the test seam: the
@@ -293,25 +335,19 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     this->invoke_to_schedIn(0, 0);
     this->component.m_engineRunning.store(false);
 
-    ASSERT_TLM_FrameOut00_SIZE(2);
+    ASSERT_EQ(this->m_frameCaptureCount, 2u);
     // The palette is re-emitted with every frame, replays included.
-    ASSERT_TLM_PaletteOut_SIZE(2);
-    ASSERT_EQ(this->tlmHistory_PaletteOut->at(1).arg.get_generation(),
+    ASSERT_from_paletteOut_SIZE(2);
+    ASSERT_EQ(this->fromPortHistory_paletteOut->at(1).palette.get_generation(),
               this->component.m_paletteGeneration);
-    const Doom::FrameChunk& replayed = this->tlmHistory_FrameOut00->at(1).arg;
-    ASSERT_EQ(replayed.get_frame(), 2U);
-    // The replayed chunks must carry the buffered pixel payload at the
-    // correct per-chunk offsets (first and last chunks checked).
-    const U8* const first = replayed.get_pixels();
-    ASSERT_TLM_FrameOut79_SIZE(2);
-    const Doom::FrameChunk& last = this->tlmHistory_FrameOut79->at(1).arg;
-    ASSERT_EQ(last.get_frame(), 2U);
-    const U8* const lastPix = last.get_pixels();
-    const U32 chunkBytes = static_cast<U32>(Doom::FRAME_CHUNK_BYTES);
-    const U32 lastOffset = 79U * chunkBytes;
-    for (U32 i = 0; i < chunkBytes; ++i) {
-        ASSERT_EQ(first[i], buf[i]) << "chunk 0 pixel " << i;
-        ASSERT_EQ(lastPix[i], buf[lastOffset + i]) << "chunk 79 pixel " << i;
+    const FrameCapture& replayed = this->m_frameCaptures[1];
+    ASSERT_EQ(replayed.frameNumber, 2U);
+    ASSERT_EQ(replayed.width, +DoomEngine::FRAME_WIDTH);
+    ASSERT_EQ(replayed.height, +DoomEngine::FRAME_HEIGHT);
+    ASSERT_EQ(replayed.size, +DoomEngine::FRAME_BYTES);
+    // The replayed frame must carry the buffered pixel payload.
+    for (U32 i = 0; i < DoomEngine::FRAME_BYTES; ++i) {
+        ASSERT_EQ(replayed.pixels[i], buf[i]) << "pixel " << i;
     }
     ASSERT_EQ(this->component.m_meltCount, 0U);
 

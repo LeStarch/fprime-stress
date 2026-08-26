@@ -38,6 +38,7 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testSchedInAppliesReset();
     void testSchedInWhenEngineOff();
     void testVirtualSleepAdvancesTicks();
+    void testVariableRateContextAdvancesClock();
     void testDrawFrameEmitsFirstDrawAndBuffersMelt();
     void testSchedInPlaysBackMeltFrames();
     void testMeltOverflowCountsDroppedFrames();
@@ -56,9 +57,30 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void connectPorts();
     void initComponents();
 
+    //! Captures a snapshot of each frameOut invocation: the buffer
+    //! contents are only valid during the synchronous call, so the
+    //! default history (which stores the Fw::Buffer) is not enough.
+    void from_frameOut_handler(FwIndexType portNum,
+                               U32 frameNumber,
+                               U16 width,
+                               U16 height,
+                               Fw::Buffer& pixels) override;
+
     FwSizeType drainKeys(bool* pressedOut, U8* codeOut, FwSizeType maxEvents);
 
     DoomEngine component;
+
+    // Snapshot of frameOut calls (metadata plus a pixel copy).
+    struct FrameCapture {
+        U32 frameNumber;
+        U16 width;
+        U16 height;
+        U32 size;
+        U8 pixels[DoomEngine::FRAME_BYTES];
+    };
+    static constexpr FwSizeType MAX_FRAME_CAPTURES = 4;
+    FrameCapture m_frameCaptures[MAX_FRAME_CAPTURES];
+    FwSizeType m_frameCaptureCount = 0;
 };
 
 }  // namespace Doom

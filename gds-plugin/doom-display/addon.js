@@ -3,10 +3,10 @@
  * buffer onto a Canvas and forwards keyboard input as F Prime commands.
  *
  * Subscribes to:
- *   - DoomEngine.FrameOut00..FrameOut79 (80 distinct FrameChunk channels,
- *     one per scanline group of 5 rows; this multiplex is what defeats
+ *   - FrameTlmProcessor.FrameRow000..FrameRow399 (one FrameRow channel
+ *     per downsampled scanline; this multiplex is what defeats
  *     TlmChan's slot-store collapse - see the library README)
- *   - DoomEngine.PaletteOut             (Palette struct, 768 RGB bytes)
+ *   - FrameTlmProcessor.PaletteOut (Palette struct, 768 RGB bytes)
  *
  * Sends:
  *   - DoomEngine.KeyDown / DoomEngine.KeyUp (DoomKey enum)
@@ -24,17 +24,18 @@ import {SaferParser} from "../../js/json.js";
 // Native JSON.parse, saved before SaferParser overrode the global. The
 // stock SaferParser's regex tokenizer is O(N**2) on the input and
 // throws RangeError("Invalid array length") on the multi-MB channel
-// responses produced by 80 FrameOutNN telemetry channels at 35 Hz. The
+// responses produced by hundreds of FrameRowNNN channels at 35 Hz. The
 // addon polls its own session and decodes responses with the native
 // parser directly, since DOOM telemetry contains no NaN/Infinity/BigInt
 // values that SaferParser was added to handle.
 const nativeJsonParse = SaferParser.language_parse;
 
-// Resolution must match Doom/FpConstants in the library:
-// FRAME_WIDTH=640, FRAME_HEIGHT=400, ROWS_PER_CHUNK=5 => 80 chunks/frame.
-const FRAME_WIDTH = 640;
-const FRAME_HEIGHT = 400;
-const CHUNKS_PER_FRAME = 80;
+// Full resolution must match Doom/FpConstants in the library. The
+// actual displayed size is dynamic: the FrameDownsampler's DOWNSAMPLE
+// parameter shrinks both dimensions, and each FrameRow carries its
+// width, so the display adapts per frame.
+const MAX_WIDTH = 640;
+const MAX_ROWS = 400;
 
 // Default 256-entry RGB palette used until the first PaletteOut packet
 // is observed. A grayscale ramp keeps the canvas readable on startup.
@@ -105,7 +106,8 @@ Vue.component("doom-display", {
                 <button v-on:click="sendStart" :disabled="!startCmd">Start</button>
                 <button v-on:click="sendStop"  :disabled="!stopCmd">Stop</button>
                 <span style="margin-left: 12px;">
-                    Frame: {{ lastFrame }} / Chunks rx: {{ chunksReceived }}
+                    Frame: {{ lastFrame }} ({{ frameWidth }}x{{ frameHeight }})
+                    / Rows rx: {{ rowsReceived }}
                     / Last key: {{ lastKey }}
                 </span>
             </div>
@@ -124,14 +126,14 @@ Vue.component("doom-display", {
     `,
     data() {
         return {
-            canvasWidth: FRAME_WIDTH * 2,
-            canvasHeight: FRAME_HEIGHT * 2,
-            chunksReceived: 0,
+            canvasWidth: MAX_WIDTH * 2,
+            canvasHeight: MAX_ROWS * 2,
+            rowsReceived: 0,
             lastFrame: 0,
+            frameWidth: MAX_WIDTH,
+            frameHeight: MAX_ROWS,
             lastKey: "(none)",
-            // Set of 80 channel ids (FrameOut00..FrameOut79) used as a
-            // lookup table for chunk dispatch. Indexed by chunk
-            // position, value is the channel id.
+            // Map of channel id -> row index (FrameRow000..FrameRow399).
             frameChannelIds: null,
             paletteChannelId: null,
             startCmd: null,
@@ -154,8 +156,8 @@ Vue.component("doom-display", {
         };
     },
     mounted() {
-        // _pixels: full FRAME_WIDTH x FRAME_HEIGHT backbuffer; _palette: 768-byte RGB.
-        this._pixels = new Uint8Array(FRAME_WIDTH * FRAME_HEIGHT);
+        // _pixels: worst-case MAX_WIDTH x MAX_ROWS backbuffer; _palette: 768-byte RGB.
+        this._pixels = new Uint8Array(MAX_WIDTH * MAX_ROWS);
         this._palette = new Uint8Array(DEFAULT_PALETTE);
         // Direct instance property; bypasses Vue's reactive proxy.
         this._heldKeys = {};
@@ -186,19 +188,19 @@ Vue.component("doom-display", {
     },
     methods: {
         refreshDictionary() {
-            // Build an id->chunk-index map. Each FrameOutNN channel
-            // carries the chunk at scanline group NN.
+            // Build an id->row-index map. Each FrameRowNNN channel
+            // carries the downsampled scanline NNN.
             const ids = {};
             let resolved = 0;
-            for (let i = 0; i < CHUNKS_PER_FRAME; i++) {
-                const suffix = ".FrameOut" + (i < 10 ? "0" + i : "" + i);
+            for (let i = 0; i < MAX_ROWS; i++) {
+                const suffix = ".FrameRow" + String(i).padStart(3, "0");
                 const cid = findChannel(suffix);
                 if (cid != null) {
                     ids[cid] = i;
                     resolved++;
                 }
             }
-            this.frameChannelIds = resolved === CHUNKS_PER_FRAME ? ids : null;
+            this.frameChannelIds = resolved === MAX_ROWS ? ids : null;
             this.paletteChannelId = findChannel(".PaletteOut");
             this.startCmd   = findCommand(".Start");
             this.stopCmd    = findCommand(".Stop");
@@ -218,8 +220,8 @@ Vue.component("doom-display", {
             // Drain everything that has accumulated in the addon's private
             // session since the last poll. Native JSON.parse here is the
             // load-bearing detail - the broken SaferParser blows up on a
-            // single multi-MB channel response, which is exactly what 80
-            // FrameOutNN packets at 35 Hz produce.
+            // single multi-MB channel response, which is exactly what
+            // hundreds of FrameRowNNN packets at 35 Hz produce.
             if (this._sessionKey == null || this._pollInFlight) { return; }
             this._pollInFlight = true;
             const url = "/channels?session=" + encodeURIComponent(this._sessionKey)
@@ -247,7 +249,7 @@ Vue.component("doom-display", {
                 const item = items[i];
                 if (item.val == null) { continue; }
                 if (this.frameChannelIds[item.id] !== undefined) {
-                    blitted = this.absorbChunk(item.val) || blitted;
+                    blitted = this.absorbRow(item.val) || blitted;
                 } else if (item.id === this.paletteChannelId) {
                     this.absorbPalette(item.val);
                 }
@@ -256,26 +258,37 @@ Vue.component("doom-display", {
                 this.blit();
             }
         },
-        absorbChunk(val) {
-            // val is the deserialised FrameChunk struct - {frame, row,
-            // rowCount, width, pixels:[bytes...]}.
-            const chunk = val.value || val;
-            const row      = Number(chunk.row);
-            const rowCount = Number(chunk.rowCount);
-            const frame    = Number(chunk.frame);
-            const pixels   = chunk.pixels;
+        absorbRow(val) {
+            // val is the deserialised FrameRow struct - {frame, row,
+            // width, pixels:[bytes...]}; only the first `width` bytes
+            // of pixels are valid.
+            const rowStruct = val.value || val;
+            const row    = Number(rowStruct.row);
+            const width  = Number(rowStruct.width);
+            const frame  = Number(rowStruct.frame);
+            const pixels = rowStruct.pixels;
             if (!Array.isArray(pixels) && !(pixels instanceof Uint8Array)) {
                 return false;
             }
-            const bytesThisChunk = rowCount * FRAME_WIDTH;
-            const offset = row * FRAME_WIDTH;
-            const limit = Math.min(bytesThisChunk, pixels.length);
+            if (width < 1 || width > MAX_WIDTH || row < 0 || row >= MAX_ROWS) {
+                return false;
+            }
+            // The downsampler shrinks both dimensions by the same factor,
+            // so the frame height follows from the row width.
+            const height = Math.round(MAX_ROWS * width / MAX_WIDTH);
+            if (width !== this.frameWidth) {
+                this.frameWidth = width;
+                this.frameHeight = height;
+                this._pixels.fill(0);
+            }
+            const offset = row * width;
+            const limit = Math.min(width, pixels.length);
             for (let i = 0; i < limit; i++) {
                 this._pixels[offset + i] = pixels[i] & 0xff;
             }
-            this.chunksReceived++;
-            // Last chunk of the frame triggers a blit.
-            if ((row + rowCount) >= FRAME_HEIGHT) {
+            this.rowsReceived++;
+            // Last row of the frame triggers a blit.
+            if ((row + 1) >= height) {
                 this.lastFrame = frame;
                 return true;
             }
@@ -300,11 +313,13 @@ Vue.component("doom-display", {
             if (ctx == null) {
                 return;
             }
-            // Build an ImageData at native FRAME_WIDTH x FRAME_HEIGHT,
-            // then use the canvas's 2x css scaling for the visible size.
-            const img = ctx.createImageData(FRAME_WIDTH, FRAME_HEIGHT);
+            // Build an ImageData at the current downsampled size, then
+            // CSS-scale the canvas up to the fixed on-screen size.
+            const width = this.frameWidth;
+            const height = this.frameHeight;
+            const img = ctx.createImageData(width, height);
             const data = img.data;
-            for (let i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; i++) {
+            for (let i = 0; i < width * height; i++) {
                 const idx = this._pixels[i];
                 const palBase = idx * 3;
                 data[i * 4]     = this._palette[palBase];
@@ -313,11 +328,11 @@ Vue.component("doom-display", {
                 data[i * 4 + 3] = 0xff;
             }
             // putImageData at native size and let the canvas's intrinsic
-            // size be CSS-scaled to canvasWidth x canvasHeight (2x).
-            ctx.canvas.width  = FRAME_WIDTH;
-            ctx.canvas.height = FRAME_HEIGHT;
-            ctx.canvas.style.width  = (FRAME_WIDTH * 2) + "px";
-            ctx.canvas.style.height = (FRAME_HEIGHT * 2) + "px";
+            // size be CSS-scaled to a fixed on-screen size.
+            ctx.canvas.width  = width;
+            ctx.canvas.height = height;
+            ctx.canvas.style.width  = (MAX_WIDTH * 2) + "px";
+            ctx.canvas.style.height = (MAX_ROWS * 2) + "px";
             ctx.putImageData(img, 0, 0);
         },
         focusCanvas() {

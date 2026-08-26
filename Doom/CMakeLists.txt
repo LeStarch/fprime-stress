@@ -137,10 +137,16 @@ target_compile_options(fprime_stress_doomgeneric
 # ----------------------------------------------------------------------
 set(SOURCE_FILES
     "${CMAKE_CURRENT_LIST_DIR}/Doom.fpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameDownsampler.fpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
     "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameDownsampler.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.cpp"
 )
 set(HEADER_FILES
     "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.hpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameDownsampler.hpp"
+    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.hpp"
 )
 set(MOD_DEPS
     Os
@@ -155,11 +161,17 @@ register_fprime_module()
 if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp")
     set(UT_SOURCE_FILES
         "${CMAKE_CURRENT_LIST_DIR}/Doom.fpp"
+        "${CMAKE_CURRENT_LIST_DIR}/FrameDownsampler.fpp"
+        "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameDownsamplerTester.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTestMain.cpp"
     )
     set(UT_HEADER_FILES
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameDownsamplerTester.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.hpp"
     )
     set(UT_AUTO_HELPERS ON)
     register_fprime_ut()

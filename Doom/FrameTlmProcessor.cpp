@@ -1,0 +1,253 @@
+// ======================================================================
+// \title  FrameTlmProcessor.cpp
+// \brief  Emits downsampled frames as per-row telemetry.
+// ======================================================================
+#include "Doom/FrameTlmProcessor.hpp"
+
+#include <cstring>
+
+namespace Doom {
+
+// Row-index -> channel-writer dispatch table (see header comment).
+const FrameTlmProcessor::RowWriter FrameTlmProcessor::kRowWriters[FrameTlmProcessor::MAX_ROWS] = {
+    &FrameTlmProcessor::tlmWrite_FrameRow000, &FrameTlmProcessor::tlmWrite_FrameRow001,
+    &FrameTlmProcessor::tlmWrite_FrameRow002, &FrameTlmProcessor::tlmWrite_FrameRow003,
+    &FrameTlmProcessor::tlmWrite_FrameRow004, &FrameTlmProcessor::tlmWrite_FrameRow005,
+    &FrameTlmProcessor::tlmWrite_FrameRow006, &FrameTlmProcessor::tlmWrite_FrameRow007,
+    &FrameTlmProcessor::tlmWrite_FrameRow008, &FrameTlmProcessor::tlmWrite_FrameRow009,
+    &FrameTlmProcessor::tlmWrite_FrameRow010, &FrameTlmProcessor::tlmWrite_FrameRow011,
+    &FrameTlmProcessor::tlmWrite_FrameRow012, &FrameTlmProcessor::tlmWrite_FrameRow013,
+    &FrameTlmProcessor::tlmWrite_FrameRow014, &FrameTlmProcessor::tlmWrite_FrameRow015,
+    &FrameTlmProcessor::tlmWrite_FrameRow016, &FrameTlmProcessor::tlmWrite_FrameRow017,
+    &FrameTlmProcessor::tlmWrite_FrameRow018, &FrameTlmProcessor::tlmWrite_FrameRow019,
+    &FrameTlmProcessor::tlmWrite_FrameRow020, &FrameTlmProcessor::tlmWrite_FrameRow021,
+    &FrameTlmProcessor::tlmWrite_FrameRow022, &FrameTlmProcessor::tlmWrite_FrameRow023,
+    &FrameTlmProcessor::tlmWrite_FrameRow024, &FrameTlmProcessor::tlmWrite_FrameRow025,
+    &FrameTlmProcessor::tlmWrite_FrameRow026, &FrameTlmProcessor::tlmWrite_FrameRow027,
+    &FrameTlmProcessor::tlmWrite_FrameRow028, &FrameTlmProcessor::tlmWrite_FrameRow029,
+    &FrameTlmProcessor::tlmWrite_FrameRow030, &FrameTlmProcessor::tlmWrite_FrameRow031,
+    &FrameTlmProcessor::tlmWrite_FrameRow032, &FrameTlmProcessor::tlmWrite_FrameRow033,
+    &FrameTlmProcessor::tlmWrite_FrameRow034, &FrameTlmProcessor::tlmWrite_FrameRow035,
+    &FrameTlmProcessor::tlmWrite_FrameRow036, &FrameTlmProcessor::tlmWrite_FrameRow037,
+    &FrameTlmProcessor::tlmWrite_FrameRow038, &FrameTlmProcessor::tlmWrite_FrameRow039,
+    &FrameTlmProcessor::tlmWrite_FrameRow040, &FrameTlmProcessor::tlmWrite_FrameRow041,
+    &FrameTlmProcessor::tlmWrite_FrameRow042, &FrameTlmProcessor::tlmWrite_FrameRow043,
+    &FrameTlmProcessor::tlmWrite_FrameRow044, &FrameTlmProcessor::tlmWrite_FrameRow045,
+    &FrameTlmProcessor::tlmWrite_FrameRow046, &FrameTlmProcessor::tlmWrite_FrameRow047,
+    &FrameTlmProcessor::tlmWrite_FrameRow048, &FrameTlmProcessor::tlmWrite_FrameRow049,
+    &FrameTlmProcessor::tlmWrite_FrameRow050, &FrameTlmProcessor::tlmWrite_FrameRow051,
+    &FrameTlmProcessor::tlmWrite_FrameRow052, &FrameTlmProcessor::tlmWrite_FrameRow053,
+    &FrameTlmProcessor::tlmWrite_FrameRow054, &FrameTlmProcessor::tlmWrite_FrameRow055,
+    &FrameTlmProcessor::tlmWrite_FrameRow056, &FrameTlmProcessor::tlmWrite_FrameRow057,
+    &FrameTlmProcessor::tlmWrite_FrameRow058, &FrameTlmProcessor::tlmWrite_FrameRow059,
+    &FrameTlmProcessor::tlmWrite_FrameRow060, &FrameTlmProcessor::tlmWrite_FrameRow061,
+    &FrameTlmProcessor::tlmWrite_FrameRow062, &FrameTlmProcessor::tlmWrite_FrameRow063,
+    &FrameTlmProcessor::tlmWrite_FrameRow064, &FrameTlmProcessor::tlmWrite_FrameRow065,
+    &FrameTlmProcessor::tlmWrite_FrameRow066, &FrameTlmProcessor::tlmWrite_FrameRow067,
+    &FrameTlmProcessor::tlmWrite_FrameRow068, &FrameTlmProcessor::tlmWrite_FrameRow069,
+    &FrameTlmProcessor::tlmWrite_FrameRow070, &FrameTlmProcessor::tlmWrite_FrameRow071,
+    &FrameTlmProcessor::tlmWrite_FrameRow072, &FrameTlmProcessor::tlmWrite_FrameRow073,
+    &FrameTlmProcessor::tlmWrite_FrameRow074, &FrameTlmProcessor::tlmWrite_FrameRow075,
+    &FrameTlmProcessor::tlmWrite_FrameRow076, &FrameTlmProcessor::tlmWrite_FrameRow077,
+    &FrameTlmProcessor::tlmWrite_FrameRow078, &FrameTlmProcessor::tlmWrite_FrameRow079,
+    &FrameTlmProcessor::tlmWrite_FrameRow080, &FrameTlmProcessor::tlmWrite_FrameRow081,
+    &FrameTlmProcessor::tlmWrite_FrameRow082, &FrameTlmProcessor::tlmWrite_FrameRow083,
+    &FrameTlmProcessor::tlmWrite_FrameRow084, &FrameTlmProcessor::tlmWrite_FrameRow085,
+    &FrameTlmProcessor::tlmWrite_FrameRow086, &FrameTlmProcessor::tlmWrite_FrameRow087,
+    &FrameTlmProcessor::tlmWrite_FrameRow088, &FrameTlmProcessor::tlmWrite_FrameRow089,
+    &FrameTlmProcessor::tlmWrite_FrameRow090, &FrameTlmProcessor::tlmWrite_FrameRow091,
+    &FrameTlmProcessor::tlmWrite_FrameRow092, &FrameTlmProcessor::tlmWrite_FrameRow093,
+    &FrameTlmProcessor::tlmWrite_FrameRow094, &FrameTlmProcessor::tlmWrite_FrameRow095,
+    &FrameTlmProcessor::tlmWrite_FrameRow096, &FrameTlmProcessor::tlmWrite_FrameRow097,
+    &FrameTlmProcessor::tlmWrite_FrameRow098, &FrameTlmProcessor::tlmWrite_FrameRow099,
+    &FrameTlmProcessor::tlmWrite_FrameRow100, &FrameTlmProcessor::tlmWrite_FrameRow101,
+    &FrameTlmProcessor::tlmWrite_FrameRow102, &FrameTlmProcessor::tlmWrite_FrameRow103,
+    &FrameTlmProcessor::tlmWrite_FrameRow104, &FrameTlmProcessor::tlmWrite_FrameRow105,
+    &FrameTlmProcessor::tlmWrite_FrameRow106, &FrameTlmProcessor::tlmWrite_FrameRow107,
+    &FrameTlmProcessor::tlmWrite_FrameRow108, &FrameTlmProcessor::tlmWrite_FrameRow109,
+    &FrameTlmProcessor::tlmWrite_FrameRow110, &FrameTlmProcessor::tlmWrite_FrameRow111,
+    &FrameTlmProcessor::tlmWrite_FrameRow112, &FrameTlmProcessor::tlmWrite_FrameRow113,
+    &FrameTlmProcessor::tlmWrite_FrameRow114, &FrameTlmProcessor::tlmWrite_FrameRow115,
+    &FrameTlmProcessor::tlmWrite_FrameRow116, &FrameTlmProcessor::tlmWrite_FrameRow117,
+    &FrameTlmProcessor::tlmWrite_FrameRow118, &FrameTlmProcessor::tlmWrite_FrameRow119,
+    &FrameTlmProcessor::tlmWrite_FrameRow120, &FrameTlmProcessor::tlmWrite_FrameRow121,
+    &FrameTlmProcessor::tlmWrite_FrameRow122, &FrameTlmProcessor::tlmWrite_FrameRow123,
+    &FrameTlmProcessor::tlmWrite_FrameRow124, &FrameTlmProcessor::tlmWrite_FrameRow125,
+    &FrameTlmProcessor::tlmWrite_FrameRow126, &FrameTlmProcessor::tlmWrite_FrameRow127,
+    &FrameTlmProcessor::tlmWrite_FrameRow128, &FrameTlmProcessor::tlmWrite_FrameRow129,
+    &FrameTlmProcessor::tlmWrite_FrameRow130, &FrameTlmProcessor::tlmWrite_FrameRow131,
+    &FrameTlmProcessor::tlmWrite_FrameRow132, &FrameTlmProcessor::tlmWrite_FrameRow133,
+    &FrameTlmProcessor::tlmWrite_FrameRow134, &FrameTlmProcessor::tlmWrite_FrameRow135,
+    &FrameTlmProcessor::tlmWrite_FrameRow136, &FrameTlmProcessor::tlmWrite_FrameRow137,
+    &FrameTlmProcessor::tlmWrite_FrameRow138, &FrameTlmProcessor::tlmWrite_FrameRow139,
+    &FrameTlmProcessor::tlmWrite_FrameRow140, &FrameTlmProcessor::tlmWrite_FrameRow141,
+    &FrameTlmProcessor::tlmWrite_FrameRow142, &FrameTlmProcessor::tlmWrite_FrameRow143,
+    &FrameTlmProcessor::tlmWrite_FrameRow144, &FrameTlmProcessor::tlmWrite_FrameRow145,
+    &FrameTlmProcessor::tlmWrite_FrameRow146, &FrameTlmProcessor::tlmWrite_FrameRow147,
+    &FrameTlmProcessor::tlmWrite_FrameRow148, &FrameTlmProcessor::tlmWrite_FrameRow149,
+    &FrameTlmProcessor::tlmWrite_FrameRow150, &FrameTlmProcessor::tlmWrite_FrameRow151,
+    &FrameTlmProcessor::tlmWrite_FrameRow152, &FrameTlmProcessor::tlmWrite_FrameRow153,
+    &FrameTlmProcessor::tlmWrite_FrameRow154, &FrameTlmProcessor::tlmWrite_FrameRow155,
+    &FrameTlmProcessor::tlmWrite_FrameRow156, &FrameTlmProcessor::tlmWrite_FrameRow157,
+    &FrameTlmProcessor::tlmWrite_FrameRow158, &FrameTlmProcessor::tlmWrite_FrameRow159,
+    &FrameTlmProcessor::tlmWrite_FrameRow160, &FrameTlmProcessor::tlmWrite_FrameRow161,
+    &FrameTlmProcessor::tlmWrite_FrameRow162, &FrameTlmProcessor::tlmWrite_FrameRow163,
+    &FrameTlmProcessor::tlmWrite_FrameRow164, &FrameTlmProcessor::tlmWrite_FrameRow165,
+    &FrameTlmProcessor::tlmWrite_FrameRow166, &FrameTlmProcessor::tlmWrite_FrameRow167,
+    &FrameTlmProcessor::tlmWrite_FrameRow168, &FrameTlmProcessor::tlmWrite_FrameRow169,
+    &FrameTlmProcessor::tlmWrite_FrameRow170, &FrameTlmProcessor::tlmWrite_FrameRow171,
+    &FrameTlmProcessor::tlmWrite_FrameRow172, &FrameTlmProcessor::tlmWrite_FrameRow173,
+    &FrameTlmProcessor::tlmWrite_FrameRow174, &FrameTlmProcessor::tlmWrite_FrameRow175,
+    &FrameTlmProcessor::tlmWrite_FrameRow176, &FrameTlmProcessor::tlmWrite_FrameRow177,
+    &FrameTlmProcessor::tlmWrite_FrameRow178, &FrameTlmProcessor::tlmWrite_FrameRow179,
+    &FrameTlmProcessor::tlmWrite_FrameRow180, &FrameTlmProcessor::tlmWrite_FrameRow181,
+    &FrameTlmProcessor::tlmWrite_FrameRow182, &FrameTlmProcessor::tlmWrite_FrameRow183,
+    &FrameTlmProcessor::tlmWrite_FrameRow184, &FrameTlmProcessor::tlmWrite_FrameRow185,
+    &FrameTlmProcessor::tlmWrite_FrameRow186, &FrameTlmProcessor::tlmWrite_FrameRow187,
+    &FrameTlmProcessor::tlmWrite_FrameRow188, &FrameTlmProcessor::tlmWrite_FrameRow189,
+    &FrameTlmProcessor::tlmWrite_FrameRow190, &FrameTlmProcessor::tlmWrite_FrameRow191,
+    &FrameTlmProcessor::tlmWrite_FrameRow192, &FrameTlmProcessor::tlmWrite_FrameRow193,
+    &FrameTlmProcessor::tlmWrite_FrameRow194, &FrameTlmProcessor::tlmWrite_FrameRow195,
+    &FrameTlmProcessor::tlmWrite_FrameRow196, &FrameTlmProcessor::tlmWrite_FrameRow197,
+    &FrameTlmProcessor::tlmWrite_FrameRow198, &FrameTlmProcessor::tlmWrite_FrameRow199,
+    &FrameTlmProcessor::tlmWrite_FrameRow200, &FrameTlmProcessor::tlmWrite_FrameRow201,
+    &FrameTlmProcessor::tlmWrite_FrameRow202, &FrameTlmProcessor::tlmWrite_FrameRow203,
+    &FrameTlmProcessor::tlmWrite_FrameRow204, &FrameTlmProcessor::tlmWrite_FrameRow205,
+    &FrameTlmProcessor::tlmWrite_FrameRow206, &FrameTlmProcessor::tlmWrite_FrameRow207,
+    &FrameTlmProcessor::tlmWrite_FrameRow208, &FrameTlmProcessor::tlmWrite_FrameRow209,
+    &FrameTlmProcessor::tlmWrite_FrameRow210, &FrameTlmProcessor::tlmWrite_FrameRow211,
+    &FrameTlmProcessor::tlmWrite_FrameRow212, &FrameTlmProcessor::tlmWrite_FrameRow213,
+    &FrameTlmProcessor::tlmWrite_FrameRow214, &FrameTlmProcessor::tlmWrite_FrameRow215,
+    &FrameTlmProcessor::tlmWrite_FrameRow216, &FrameTlmProcessor::tlmWrite_FrameRow217,
+    &FrameTlmProcessor::tlmWrite_FrameRow218, &FrameTlmProcessor::tlmWrite_FrameRow219,
+    &FrameTlmProcessor::tlmWrite_FrameRow220, &FrameTlmProcessor::tlmWrite_FrameRow221,
+    &FrameTlmProcessor::tlmWrite_FrameRow222, &FrameTlmProcessor::tlmWrite_FrameRow223,
+    &FrameTlmProcessor::tlmWrite_FrameRow224, &FrameTlmProcessor::tlmWrite_FrameRow225,
+    &FrameTlmProcessor::tlmWrite_FrameRow226, &FrameTlmProcessor::tlmWrite_FrameRow227,
+    &FrameTlmProcessor::tlmWrite_FrameRow228, &FrameTlmProcessor::tlmWrite_FrameRow229,
+    &FrameTlmProcessor::tlmWrite_FrameRow230, &FrameTlmProcessor::tlmWrite_FrameRow231,
+    &FrameTlmProcessor::tlmWrite_FrameRow232, &FrameTlmProcessor::tlmWrite_FrameRow233,
+    &FrameTlmProcessor::tlmWrite_FrameRow234, &FrameTlmProcessor::tlmWrite_FrameRow235,
+    &FrameTlmProcessor::tlmWrite_FrameRow236, &FrameTlmProcessor::tlmWrite_FrameRow237,
+    &FrameTlmProcessor::tlmWrite_FrameRow238, &FrameTlmProcessor::tlmWrite_FrameRow239,
+    &FrameTlmProcessor::tlmWrite_FrameRow240, &FrameTlmProcessor::tlmWrite_FrameRow241,
+    &FrameTlmProcessor::tlmWrite_FrameRow242, &FrameTlmProcessor::tlmWrite_FrameRow243,
+    &FrameTlmProcessor::tlmWrite_FrameRow244, &FrameTlmProcessor::tlmWrite_FrameRow245,
+    &FrameTlmProcessor::tlmWrite_FrameRow246, &FrameTlmProcessor::tlmWrite_FrameRow247,
+    &FrameTlmProcessor::tlmWrite_FrameRow248, &FrameTlmProcessor::tlmWrite_FrameRow249,
+    &FrameTlmProcessor::tlmWrite_FrameRow250, &FrameTlmProcessor::tlmWrite_FrameRow251,
+    &FrameTlmProcessor::tlmWrite_FrameRow252, &FrameTlmProcessor::tlmWrite_FrameRow253,
+    &FrameTlmProcessor::tlmWrite_FrameRow254, &FrameTlmProcessor::tlmWrite_FrameRow255,
+    &FrameTlmProcessor::tlmWrite_FrameRow256, &FrameTlmProcessor::tlmWrite_FrameRow257,
+    &FrameTlmProcessor::tlmWrite_FrameRow258, &FrameTlmProcessor::tlmWrite_FrameRow259,
+    &FrameTlmProcessor::tlmWrite_FrameRow260, &FrameTlmProcessor::tlmWrite_FrameRow261,
+    &FrameTlmProcessor::tlmWrite_FrameRow262, &FrameTlmProcessor::tlmWrite_FrameRow263,
+    &FrameTlmProcessor::tlmWrite_FrameRow264, &FrameTlmProcessor::tlmWrite_FrameRow265,
+    &FrameTlmProcessor::tlmWrite_FrameRow266, &FrameTlmProcessor::tlmWrite_FrameRow267,
+    &FrameTlmProcessor::tlmWrite_FrameRow268, &FrameTlmProcessor::tlmWrite_FrameRow269,
+    &FrameTlmProcessor::tlmWrite_FrameRow270, &FrameTlmProcessor::tlmWrite_FrameRow271,
+    &FrameTlmProcessor::tlmWrite_FrameRow272, &FrameTlmProcessor::tlmWrite_FrameRow273,
+    &FrameTlmProcessor::tlmWrite_FrameRow274, &FrameTlmProcessor::tlmWrite_FrameRow275,
+    &FrameTlmProcessor::tlmWrite_FrameRow276, &FrameTlmProcessor::tlmWrite_FrameRow277,
+    &FrameTlmProcessor::tlmWrite_FrameRow278, &FrameTlmProcessor::tlmWrite_FrameRow279,
+    &FrameTlmProcessor::tlmWrite_FrameRow280, &FrameTlmProcessor::tlmWrite_FrameRow281,
+    &FrameTlmProcessor::tlmWrite_FrameRow282, &FrameTlmProcessor::tlmWrite_FrameRow283,
+    &FrameTlmProcessor::tlmWrite_FrameRow284, &FrameTlmProcessor::tlmWrite_FrameRow285,
+    &FrameTlmProcessor::tlmWrite_FrameRow286, &FrameTlmProcessor::tlmWrite_FrameRow287,
+    &FrameTlmProcessor::tlmWrite_FrameRow288, &FrameTlmProcessor::tlmWrite_FrameRow289,
+    &FrameTlmProcessor::tlmWrite_FrameRow290, &FrameTlmProcessor::tlmWrite_FrameRow291,
+    &FrameTlmProcessor::tlmWrite_FrameRow292, &FrameTlmProcessor::tlmWrite_FrameRow293,
+    &FrameTlmProcessor::tlmWrite_FrameRow294, &FrameTlmProcessor::tlmWrite_FrameRow295,
+    &FrameTlmProcessor::tlmWrite_FrameRow296, &FrameTlmProcessor::tlmWrite_FrameRow297,
+    &FrameTlmProcessor::tlmWrite_FrameRow298, &FrameTlmProcessor::tlmWrite_FrameRow299,
+    &FrameTlmProcessor::tlmWrite_FrameRow300, &FrameTlmProcessor::tlmWrite_FrameRow301,
+    &FrameTlmProcessor::tlmWrite_FrameRow302, &FrameTlmProcessor::tlmWrite_FrameRow303,
+    &FrameTlmProcessor::tlmWrite_FrameRow304, &FrameTlmProcessor::tlmWrite_FrameRow305,
+    &FrameTlmProcessor::tlmWrite_FrameRow306, &FrameTlmProcessor::tlmWrite_FrameRow307,
+    &FrameTlmProcessor::tlmWrite_FrameRow308, &FrameTlmProcessor::tlmWrite_FrameRow309,
+    &FrameTlmProcessor::tlmWrite_FrameRow310, &FrameTlmProcessor::tlmWrite_FrameRow311,
+    &FrameTlmProcessor::tlmWrite_FrameRow312, &FrameTlmProcessor::tlmWrite_FrameRow313,
+    &FrameTlmProcessor::tlmWrite_FrameRow314, &FrameTlmProcessor::tlmWrite_FrameRow315,
+    &FrameTlmProcessor::tlmWrite_FrameRow316, &FrameTlmProcessor::tlmWrite_FrameRow317,
+    &FrameTlmProcessor::tlmWrite_FrameRow318, &FrameTlmProcessor::tlmWrite_FrameRow319,
+    &FrameTlmProcessor::tlmWrite_FrameRow320, &FrameTlmProcessor::tlmWrite_FrameRow321,
+    &FrameTlmProcessor::tlmWrite_FrameRow322, &FrameTlmProcessor::tlmWrite_FrameRow323,
+    &FrameTlmProcessor::tlmWrite_FrameRow324, &FrameTlmProcessor::tlmWrite_FrameRow325,
+    &FrameTlmProcessor::tlmWrite_FrameRow326, &FrameTlmProcessor::tlmWrite_FrameRow327,
+    &FrameTlmProcessor::tlmWrite_FrameRow328, &FrameTlmProcessor::tlmWrite_FrameRow329,
+    &FrameTlmProcessor::tlmWrite_FrameRow330, &FrameTlmProcessor::tlmWrite_FrameRow331,
+    &FrameTlmProcessor::tlmWrite_FrameRow332, &FrameTlmProcessor::tlmWrite_FrameRow333,
+    &FrameTlmProcessor::tlmWrite_FrameRow334, &FrameTlmProcessor::tlmWrite_FrameRow335,
+    &FrameTlmProcessor::tlmWrite_FrameRow336, &FrameTlmProcessor::tlmWrite_FrameRow337,
+    &FrameTlmProcessor::tlmWrite_FrameRow338, &FrameTlmProcessor::tlmWrite_FrameRow339,
+    &FrameTlmProcessor::tlmWrite_FrameRow340, &FrameTlmProcessor::tlmWrite_FrameRow341,
+    &FrameTlmProcessor::tlmWrite_FrameRow342, &FrameTlmProcessor::tlmWrite_FrameRow343,
+    &FrameTlmProcessor::tlmWrite_FrameRow344, &FrameTlmProcessor::tlmWrite_FrameRow345,
+    &FrameTlmProcessor::tlmWrite_FrameRow346, &FrameTlmProcessor::tlmWrite_FrameRow347,
+    &FrameTlmProcessor::tlmWrite_FrameRow348, &FrameTlmProcessor::tlmWrite_FrameRow349,
+    &FrameTlmProcessor::tlmWrite_FrameRow350, &FrameTlmProcessor::tlmWrite_FrameRow351,
+    &FrameTlmProcessor::tlmWrite_FrameRow352, &FrameTlmProcessor::tlmWrite_FrameRow353,
+    &FrameTlmProcessor::tlmWrite_FrameRow354, &FrameTlmProcessor::tlmWrite_FrameRow355,
+    &FrameTlmProcessor::tlmWrite_FrameRow356, &FrameTlmProcessor::tlmWrite_FrameRow357,
+    &FrameTlmProcessor::tlmWrite_FrameRow358, &FrameTlmProcessor::tlmWrite_FrameRow359,
+    &FrameTlmProcessor::tlmWrite_FrameRow360, &FrameTlmProcessor::tlmWrite_FrameRow361,
+    &FrameTlmProcessor::tlmWrite_FrameRow362, &FrameTlmProcessor::tlmWrite_FrameRow363,
+    &FrameTlmProcessor::tlmWrite_FrameRow364, &FrameTlmProcessor::tlmWrite_FrameRow365,
+    &FrameTlmProcessor::tlmWrite_FrameRow366, &FrameTlmProcessor::tlmWrite_FrameRow367,
+    &FrameTlmProcessor::tlmWrite_FrameRow368, &FrameTlmProcessor::tlmWrite_FrameRow369,
+    &FrameTlmProcessor::tlmWrite_FrameRow370, &FrameTlmProcessor::tlmWrite_FrameRow371,
+    &FrameTlmProcessor::tlmWrite_FrameRow372, &FrameTlmProcessor::tlmWrite_FrameRow373,
+    &FrameTlmProcessor::tlmWrite_FrameRow374, &FrameTlmProcessor::tlmWrite_FrameRow375,
+    &FrameTlmProcessor::tlmWrite_FrameRow376, &FrameTlmProcessor::tlmWrite_FrameRow377,
+    &FrameTlmProcessor::tlmWrite_FrameRow378, &FrameTlmProcessor::tlmWrite_FrameRow379,
+    &FrameTlmProcessor::tlmWrite_FrameRow380, &FrameTlmProcessor::tlmWrite_FrameRow381,
+    &FrameTlmProcessor::tlmWrite_FrameRow382, &FrameTlmProcessor::tlmWrite_FrameRow383,
+    &FrameTlmProcessor::tlmWrite_FrameRow384, &FrameTlmProcessor::tlmWrite_FrameRow385,
+    &FrameTlmProcessor::tlmWrite_FrameRow386, &FrameTlmProcessor::tlmWrite_FrameRow387,
+    &FrameTlmProcessor::tlmWrite_FrameRow388, &FrameTlmProcessor::tlmWrite_FrameRow389,
+    &FrameTlmProcessor::tlmWrite_FrameRow390, &FrameTlmProcessor::tlmWrite_FrameRow391,
+    &FrameTlmProcessor::tlmWrite_FrameRow392, &FrameTlmProcessor::tlmWrite_FrameRow393,
+    &FrameTlmProcessor::tlmWrite_FrameRow394, &FrameTlmProcessor::tlmWrite_FrameRow395,
+    &FrameTlmProcessor::tlmWrite_FrameRow396, &FrameTlmProcessor::tlmWrite_FrameRow397,
+    &FrameTlmProcessor::tlmWrite_FrameRow398, &FrameTlmProcessor::tlmWrite_FrameRow399,
+};
+
+FrameTlmProcessor::FrameTlmProcessor(const char* compName) : FrameTlmProcessorComponentBase(compName) {}
+
+FrameTlmProcessor::~FrameTlmProcessor() {}
+
+void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
+                                        U32 frameNumber,
+                                        U16 width,
+                                        U16 height,
+                                        Fw::Buffer& pixels) {
+    // Validate rather than assert: dimensions arrive over a port and a
+    // misbehaving upstream must not take the deployment down.
+    const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
+    if ((width == 0U) || (height == 0U) || (width > MAX_WIDTH) || (height > MAX_ROWS) ||
+        (pixels.getData() == nullptr) || (pixels.getSize() < frameBytes)) {
+        this->log_WARNING_LO_InvalidFrame(width, height);
+        return;
+    }
+
+    const U8* const src = pixels.getData();
+    m_row.set_frame(frameNumber);
+    m_row.set_width(width);
+    U8* const rowPixels = m_row.get_pixels();
+
+    // One channel per scanline, emitted only to the incoming height.
+    // Trailing bytes beyond `width` are zeroed once here and stay zero
+    // because every row of this frame shares the same width.
+    (void)::memset(&rowPixels[width], 0, static_cast<size_t>(MAX_WIDTH - width));
+    for (U16 r = 0; r < height; r++) {
+        (void)::memcpy(rowPixels, &src[static_cast<U32>(r) * static_cast<U32>(width)], width);
+        m_row.set_row(r);
+        (this->*kRowWriters[r])(m_row, Fw::Time());
+    }
+}
+
+void FrameTlmProcessor::paletteIn_handler(FwIndexType portNum, const Doom::Palette& palette) {
+    this->tlmWrite_PaletteOut(palette);
+}
+
+}  // namespace Doom

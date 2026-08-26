@@ -19,6 +19,7 @@
 
 #include "Doom/FppConstantsAc.hpp"
 
+#include <Fw/Buffer/Buffer.hpp>
 #include <Fw/Types/Assert.hpp>
 #include <Fw/Types/String.hpp>
 #include <Fw/Time/TimeInterval.hpp>
@@ -40,51 +41,6 @@ extern "C" {
 namespace Doom {
 
 DoomEngine* DoomEngine::s_instance = nullptr;
-
-// Definition of the dispatch table declared in DoomEngine.hpp. See the
-// header comment there for why this lives at class scope.
-const DoomEngine::FrameOutWriter DoomEngine::kFrameOutWriters[Doom::CHUNKS_PER_FRAME] = {
-    &DoomEngine::tlmWrite_FrameOut00, &DoomEngine::tlmWrite_FrameOut01,
-    &DoomEngine::tlmWrite_FrameOut02, &DoomEngine::tlmWrite_FrameOut03,
-    &DoomEngine::tlmWrite_FrameOut04, &DoomEngine::tlmWrite_FrameOut05,
-    &DoomEngine::tlmWrite_FrameOut06, &DoomEngine::tlmWrite_FrameOut07,
-    &DoomEngine::tlmWrite_FrameOut08, &DoomEngine::tlmWrite_FrameOut09,
-    &DoomEngine::tlmWrite_FrameOut10, &DoomEngine::tlmWrite_FrameOut11,
-    &DoomEngine::tlmWrite_FrameOut12, &DoomEngine::tlmWrite_FrameOut13,
-    &DoomEngine::tlmWrite_FrameOut14, &DoomEngine::tlmWrite_FrameOut15,
-    &DoomEngine::tlmWrite_FrameOut16, &DoomEngine::tlmWrite_FrameOut17,
-    &DoomEngine::tlmWrite_FrameOut18, &DoomEngine::tlmWrite_FrameOut19,
-    &DoomEngine::tlmWrite_FrameOut20, &DoomEngine::tlmWrite_FrameOut21,
-    &DoomEngine::tlmWrite_FrameOut22, &DoomEngine::tlmWrite_FrameOut23,
-    &DoomEngine::tlmWrite_FrameOut24, &DoomEngine::tlmWrite_FrameOut25,
-    &DoomEngine::tlmWrite_FrameOut26, &DoomEngine::tlmWrite_FrameOut27,
-    &DoomEngine::tlmWrite_FrameOut28, &DoomEngine::tlmWrite_FrameOut29,
-    &DoomEngine::tlmWrite_FrameOut30, &DoomEngine::tlmWrite_FrameOut31,
-    &DoomEngine::tlmWrite_FrameOut32, &DoomEngine::tlmWrite_FrameOut33,
-    &DoomEngine::tlmWrite_FrameOut34, &DoomEngine::tlmWrite_FrameOut35,
-    &DoomEngine::tlmWrite_FrameOut36, &DoomEngine::tlmWrite_FrameOut37,
-    &DoomEngine::tlmWrite_FrameOut38, &DoomEngine::tlmWrite_FrameOut39,
-    &DoomEngine::tlmWrite_FrameOut40, &DoomEngine::tlmWrite_FrameOut41,
-    &DoomEngine::tlmWrite_FrameOut42, &DoomEngine::tlmWrite_FrameOut43,
-    &DoomEngine::tlmWrite_FrameOut44, &DoomEngine::tlmWrite_FrameOut45,
-    &DoomEngine::tlmWrite_FrameOut46, &DoomEngine::tlmWrite_FrameOut47,
-    &DoomEngine::tlmWrite_FrameOut48, &DoomEngine::tlmWrite_FrameOut49,
-    &DoomEngine::tlmWrite_FrameOut50, &DoomEngine::tlmWrite_FrameOut51,
-    &DoomEngine::tlmWrite_FrameOut52, &DoomEngine::tlmWrite_FrameOut53,
-    &DoomEngine::tlmWrite_FrameOut54, &DoomEngine::tlmWrite_FrameOut55,
-    &DoomEngine::tlmWrite_FrameOut56, &DoomEngine::tlmWrite_FrameOut57,
-    &DoomEngine::tlmWrite_FrameOut58, &DoomEngine::tlmWrite_FrameOut59,
-    &DoomEngine::tlmWrite_FrameOut60, &DoomEngine::tlmWrite_FrameOut61,
-    &DoomEngine::tlmWrite_FrameOut62, &DoomEngine::tlmWrite_FrameOut63,
-    &DoomEngine::tlmWrite_FrameOut64, &DoomEngine::tlmWrite_FrameOut65,
-    &DoomEngine::tlmWrite_FrameOut66, &DoomEngine::tlmWrite_FrameOut67,
-    &DoomEngine::tlmWrite_FrameOut68, &DoomEngine::tlmWrite_FrameOut69,
-    &DoomEngine::tlmWrite_FrameOut70, &DoomEngine::tlmWrite_FrameOut71,
-    &DoomEngine::tlmWrite_FrameOut72, &DoomEngine::tlmWrite_FrameOut73,
-    &DoomEngine::tlmWrite_FrameOut74, &DoomEngine::tlmWrite_FrameOut75,
-    &DoomEngine::tlmWrite_FrameOut76, &DoomEngine::tlmWrite_FrameOut77,
-    &DoomEngine::tlmWrite_FrameOut78, &DoomEngine::tlmWrite_FrameOut79
-};
 
 // ----------------------------------------------------------------------
 // Construction / destruction
@@ -108,9 +64,12 @@ DoomEngine::DoomEngine(const char* compName)
       m_inputEventsThisWindow(0),
       m_inputBytesThisWindow(0),
       m_schedTicks(0),
+      m_windowElapsedUsec(0),
       m_framesThisWindow(0),
       m_frameBytesThisWindow(0),
       m_virtualSleepMs(0),
+      m_useTickTime(false),
+      m_tickElapsedUsec(0),
       m_realElapsedUsec(0),
       m_drawsThisTick(0),
       m_meltHead(0),
@@ -126,6 +85,7 @@ DoomEngine::DoomEngine(const char* compName)
     (void)::memset(m_argvPointers, 0, sizeof(m_argvPointers));
     (void)::memset(m_meltFrames, 0, sizeof(m_meltFrames));
     (void)::memset(m_meltFrameNumbers, 0, sizeof(m_meltFrameNumbers));
+    (void)::memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
 }
 
 DoomEngine::~DoomEngine() {
@@ -170,6 +130,20 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     // this flag clear, so either it waits for this tick or this tick
     // observes the engine stopped. See the rendezvous in forceStart().
     TickGuard guard(m_tickInProgress);
+    // Variable-rate support: a nonzero context carries the rate
+    // group's period in microseconds per tick. The engine clock then
+    // advances by tick time, so any rate-group frequency paces DOOM
+    // correctly. Context 0 keeps the legacy OS-clock behavior.
+    if (context > 0U) {
+        if (!m_useTickTime) {
+            // Fold in real time accrued so far; the clock never steps back.
+            (void)this->platformGetTicksMs();
+            m_tickElapsedUsec = m_realElapsedUsec;
+            m_useTickTime = true;
+        }
+        m_tickElapsedUsec += context;
+        m_windowElapsedUsec += context;
+    }
     if (!m_engineRunning.load()) {
         // Engine not running - re-publish the last state (OFF, FAILED,
         // or a transient STARTING) rather than clobbering it with OFF.
@@ -220,7 +194,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         doomgeneric_Tick();
     }
 
-    // Refresh derived telemetry. FrameOut / PaletteOut are emitted
+    // Refresh derived telemetry. frameOut / paletteOut are emitted
     // either by the melt playback above or from DG_DrawFrame inside
     // Tick. Re-check the running flag so a Stop that landed mid-tick
     // is not followed by a stale RUNNING heartbeat.
@@ -237,13 +211,18 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     this->tlmWrite_KeyEventsDropped(dropped);
     this->tlmWrite_FramesDropped(m_framesDropped);
 
-    // Emit derived rate telemetry once per RATE_WINDOW_TICKS. With the
-    // deployment's 35 Hz rate group (matching DOOM's native cadence)
-    // this is once per second.
+    // Emit derived rate telemetry roughly once per second: after one
+    // second of accumulated tick time in variable-rate mode, or after
+    // 35 ticks in the legacy fixed-35-Hz mode.
     m_schedTicks++;
     constexpr U32 RATE_WINDOW_TICKS = 35U;
-    if (m_schedTicks >= RATE_WINDOW_TICKS) {
-        const F32 windowSec = static_cast<F32>(m_schedTicks) / 35.0f;
+    constexpr U32 RATE_WINDOW_USEC = 1000000U;
+    const bool windowDone = m_useTickTime ? (m_windowElapsedUsec >= RATE_WINDOW_USEC)
+                                          : (m_schedTicks >= RATE_WINDOW_TICKS);
+    if (windowDone) {
+        const F32 windowSec = m_useTickTime
+            ? (static_cast<F32>(m_windowElapsedUsec) / 1000000.0f)
+            : (static_cast<F32>(m_schedTicks) / 35.0f);
         const F32 frameRate = static_cast<F32>(m_framesThisWindow) / windowSec;
         const U32 frameDataRate = (windowSec > 0.0f)
             ? static_cast<U32>(static_cast<F32>(m_frameBytesThisWindow) / windowSec)
@@ -269,6 +248,7 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         this->tlmWrite_InputDataRateBps(inputDataRate);
 
         m_schedTicks = 0U;
+        m_windowElapsedUsec = 0U;
         m_framesThisWindow = 0U;
         m_frameBytesThisWindow = 0U;
     }
@@ -353,6 +333,7 @@ bool DoomEngine::forceStart() {
     if (!m_engineCreated) {
         m_virtualSleepMs = 0U;
         m_realElapsedUsec = 0U;
+        m_tickElapsedUsec = 0U;
 
         // Run the engine in singletics mode: exactly one game tic per
         // doomgeneric_Tick() call, removing every wall-clock dependency
@@ -568,49 +549,25 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
     FW_ASSERT(src != nullptr);
     this->capturePaletteIfChanged();
 
-    // FRAME_HEIGHT is an exact multiple of ROWS_PER_CHUNK (400 / 5 = 80),
-    // so every chunk is the same fixed size and no partial-chunk handling
-    // is needed. Enforce that invariant at compile time so the loop body
-    // can copy a fixed FRAME_CHUNK_BYTES per iteration.
-    static_assert((FRAME_HEIGHT % ROWS_PER_CHUNK) == 0U,
-                  "FRAME_HEIGHT must be an integer multiple of ROWS_PER_CHUNK");
-    static_assert(static_cast<U32>(ROWS_PER_CHUNK) * static_cast<U32>(FRAME_WIDTH) ==
-                      static_cast<U32>(Doom::FRAME_CHUNK_BYTES),
-                  "ROWS_PER_CHUNK * FRAME_WIDTH must equal FRAME_CHUNK_BYTES");
-
-    Doom::FrameChunk chunk;
-    chunk.set_width(FRAME_WIDTH);
-    chunk.set_rowCount(ROWS_PER_CHUNK);
-    chunk.set_frame(frameNumber);
-    U8* const chunkPixels = chunk.get_pixels();
-
-    // Each iteration writes its chunk to a distinct telemetry channel id
-    // (FrameOut00 .. FrameOut79) via the dispatch table. The N->channel-id
-    // multiplex is what defeats TlmChan's slot-store collapse - see the
-    // header comment on kFrameOutWriters above.
-    for (U16 chunkIdx = 0; chunkIdx < Doom::CHUNKS_PER_FRAME; chunkIdx++) {
-        const U16 currentRow = static_cast<U16>(chunkIdx * ROWS_PER_CHUNK);
-        const U32 offset = static_cast<U32>(currentRow) * static_cast<U32>(FRAME_WIDTH);
-        (void)::memcpy(chunkPixels, &src[offset], Doom::FRAME_CHUNK_BYTES);
-        chunk.set_row(currentRow);
-        (this->*kFrameOutWriters[chunkIdx])(chunk, Fw::Time());
-        // Account for on-wire bytes of this chunk: the fixed-size pixel
-        // payload plus the small struct header (frame U32 + row/rowCount/
-        // width U16 = 10 B). Round to FRAME_CHUNK_BYTES + 16 to cover
-        // serialization framing without overcounting.
-        m_frameBytesThisWindow += static_cast<U32>(Doom::FRAME_CHUNK_BYTES) + 16U;
+    // The palette goes first so the receiver can render the frame that
+    // follows. Sent every frame so a late-attaching ground converges.
+    if (this->isConnected_paletteOut_OutputPort(0)) {
+        Doom::Palette pal;
+        pal.set_generation(m_paletteGeneration);
+        (void)::memcpy(pal.get_rgb(), m_pendingPalette, sizeof(m_pendingPalette));
+        this->paletteOut_out(0, pal);
+        m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
     }
 
-    // The palette (768 B, negligible vs 256 KB frames) is emitted
-    // every frame rather than on change, so the ground converges on
-    // the active palette regardless of when it attached. Melt replays
-    // use the live palette (palette swaps mid-wipe are not preserved).
-    Doom::Palette pal;
-    pal.set_generation(m_paletteGeneration);
-    U8* const dest = pal.get_rgb();
-    (void)::memcpy(dest, m_pendingPalette, sizeof(m_pendingPalette));
-    this->tlmWrite_PaletteOut(pal);
-    m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
+    // Copy into engine-owned storage: the downstream downsampler packs
+    // the buffer in place, and DOOM partially redraws DG_ScreenBuffer
+    // between frames, so the live buffer must not be handed out.
+    if (this->isConnected_frameOut_OutputPort(0)) {
+        (void)::memcpy(m_frameBuffer, src, FRAME_BYTES);
+        Fw::Buffer pixels(m_frameBuffer, FRAME_BYTES);
+        this->frameOut_out(0, frameNumber, FRAME_WIDTH, FRAME_HEIGHT, pixels);
+        m_frameBytesThisWindow += FRAME_BYTES + 16U;
+    }
 }
 
 void DoomEngine::capturePaletteIfChanged() {
@@ -641,6 +598,11 @@ void DoomEngine::platformSleepMs(U32 ms) {
 }
 
 U32 DoomEngine::platformGetTicksMs() {
+    // Variable-rate mode: the clock is the tick time accumulated from
+    // the schedIn context, so DOOM's timers track the actual rate.
+    if (m_useTickTime) {
+        return static_cast<U32>(m_tickElapsedUsec / 1000U) + m_virtualSleepMs;
+    }
     // Real elapsed time accumulates in a U64 and m_engineStart is
     // rebased on every successful read, so each getDiffUsec delta stays
     // tiny and its U32 range (~71.6 min) is never hit. On a failed read
