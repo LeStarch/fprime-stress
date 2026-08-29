@@ -1,8 +1,0 @@
-<!--
-dashboard.xml: drop-in dashboard tile that exposes the doom-display
-component as a panel. To use, point fprime-gds at this file via the
--d / --dashboard option, or include it from your project's dashboard.
--->
-<dashboard-box title="DOOM" border-color="#770000">
-    <doom-display></doom-display>
-</dashboard-box>

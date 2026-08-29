@@ -9,7 +9,7 @@
 #include <Fw/Types/MallocAllocator.hpp>
 #include <Svc/BufferManager/BufferManager.hpp>
 
-#include "DoomSubtopology/DoomSubtopologyConfig/DoomSubtopologyConfig.hpp"
+#include "Doom/DoomSubtopology/DoomSubtopologyConfig/DoomSubtopologyConfig.hpp"
 
 namespace DoomSubtopology {
 
