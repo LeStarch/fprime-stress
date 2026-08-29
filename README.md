@@ -93,8 +93,9 @@ frame**) is too large to ship as a single FPP telemetry sample
 under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (4 kB by default).
 The engine sends the complete frame out a synchronous `Doom.RawFrame`
 port as an `Fw::Buffer`; a passive `FrameDownsampler` decimates it in
-place by a runtime-parameterized power-of-two factor (`DOWNSAMPLE`:
-X1..X16, default X2), and a passive `FrameTlmProcessor` emits one
+place by a compile-time power-of-two factor (`Doom.DOWNSAMPLE_FACTOR`
+in `Doom/DoomConfig/DoomConfig.fpp`: 1..16, default 2), and a passive
+`FrameTlmProcessor` emits one
 `Doom.FrameRow` telemetry channel per downsampled scanline. At the
 default X2 (320 × 200) that is 200 rows per frame, 35 frames per
 second (DOOM's native cadence), 7,000 rows per second of sustained
