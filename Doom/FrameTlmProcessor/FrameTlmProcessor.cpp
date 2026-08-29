@@ -222,11 +222,10 @@ void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
                                         U16 height,
                                         Fw::Buffer& pixels) {
     // Validate rather than assert: dimensions arrive over a port and a
-    // misbehaving upstream must not take the deployment down. The row
-    // pixel array is sized exactly to the configured downsampled
-    // width, so any other width cannot be represented.
+    // misbehaving upstream must not take the deployment down. Dimensions
+    // must match the compile-time downsample configuration exactly.
     const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
-    if ((width != ROW_WIDTH) || (height == 0U) || (height > MAX_ROWS) || (pixels.getData() == nullptr) ||
+    if ((width != ROW_WIDTH) || (height != ROW_HEIGHT) || (pixels.getData() == nullptr) ||
         (pixels.getSize() < frameBytes)) {
         this->log_WARNING_LO_InvalidFrame(width, height);
         return;

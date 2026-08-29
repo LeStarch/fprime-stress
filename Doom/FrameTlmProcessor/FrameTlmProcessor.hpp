@@ -18,6 +18,9 @@ class FrameTlmProcessor final : public FrameTlmProcessorComponentBase {
     //! Exact pixels per row channel (configured downsampled width).
     static constexpr U16 ROW_WIDTH = Doom::DOWNSAMPLED_WIDTH;
 
+    //! Exact rows per frame (configured downsampled height).
+    static constexpr U16 ROW_HEIGHT = Doom::DOWNSAMPLED_HEIGHT;
+
     explicit FrameTlmProcessor(const char* compName);
     ~FrameTlmProcessor() override;
 
