@@ -12,6 +12,10 @@
 
 namespace Doom {
 
+static_assert(DOWNSAMPLE_FACTOR >= 1, "DOWNSAMPLE_FACTOR must be positive");
+static_assert((FRAME_WIDTH % DOWNSAMPLE_FACTOR) == 0, "DOWNSAMPLE_FACTOR must divide FRAME_WIDTH");
+static_assert((FRAME_HEIGHT % DOWNSAMPLE_FACTOR) == 0, "DOWNSAMPLE_FACTOR must divide FRAME_HEIGHT");
+
 FrameDownsampler::FrameDownsampler(const char* compName) : FrameDownsamplerComponentBase(compName) {}
 
 FrameDownsampler::~FrameDownsampler() {}
@@ -21,17 +25,12 @@ void FrameDownsampler::frameIn_handler(FwIndexType portNum,
                                        U16 width,
                                        U16 height,
                                        Fw::Buffer& pixels) {
-    Fw::ParamValid valid;
-    const Doom::DownsampleFactor factorParam = this->paramGet_DOWNSAMPLE(valid);
-    // Fall back to the model default on an unset/invalid parameter.
-    const U16 factor = ((valid == Fw::ParamValid::VALID) || (valid == Fw::ParamValid::DEFAULT))
-                           ? static_cast<U16>(factorParam.e)
-                           : static_cast<U16>(Doom::DownsampleFactor::X2);
+    constexpr U16 factor = static_cast<U16>(DOWNSAMPLE_FACTOR);
 
     // Validate rather than assert: dimensions arrive over a port and a
     // misbehaving upstream must not take the deployment down.
     const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
-    if ((factor == 0U) || ((width % factor) != 0U) || ((height % factor) != 0U) || (pixels.getData() == nullptr) ||
+    if (((width % factor) != 0U) || ((height % factor) != 0U) || (pixels.getData() == nullptr) ||
         (pixels.getSize() < frameBytes)) {
         this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor));
         return;

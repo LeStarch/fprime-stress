@@ -30,10 +30,10 @@
  * their first entry. Nothing in this file depends on deployment naming.
  */
 
-// Must match Doom/Doom.fpp: FRAME_WIDTH, FRAME_HEIGHT. These are the
-// full-resolution maxima; the FrameDownsampler shrinks both dimensions
-// by its DOWNSAMPLE factor and each FrameRow carries its own width, so
-// the displayed dimensions are derived per frame.
+// Must match Doom/DoomConfig/DoomConfig.fpp: FRAME_WIDTH, FRAME_HEIGHT.
+// These are the full-resolution maxima; the FrameDownsampler shrinks
+// both dimensions by the compile-time DOWNSAMPLE_FACTOR and each
+// FrameRow carries its width, so displayed dimensions derive per frame.
 const MAX_WIDTH = 640;
 const MAX_ROWS = 400;
 
@@ -45,7 +45,8 @@ const PKT_ID_OFFSET = SPACE_PACKET_HEADER_LEN + 2;
 const PKT_DATA_OFFSET = PKT_ID_OFFSET + 2 + 2 + 1 + 4 + 4;
 const APID_TLM_PKT = 4;
 
-// FrameRow struct layout: frame u32, row u16, width u16, pixels[640].
+// FrameRow struct layout: frame u32, row u16, width u16,
+// pixels[DOWNSAMPLED_WIDTH] (array sized by width on the wire).
 const ROW_PIXELS_OFFSET = 8;
 // Palette struct layout: generation u32, rgb[768].
 const PALETTE_RGB_OFFSET = 4;

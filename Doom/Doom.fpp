@@ -1,41 +1,28 @@
 module Doom {
 
   # ----------------------------------------------------------------------
-  # Frame dimensions
-  #
-  # The wrapped DOOM engine runs at a fixed 640 x 400 palette-indexed
-  # resolution. The engine hands each full frame to a downsampler over
-  # a synchronous RawFrame port; the downsampler decimates it in place
-  # and forwards it to a telemetry processor that emits one FrameRow
-  # telemetry channel per scanline of the (possibly reduced) frame.
-  # ----------------------------------------------------------------------
-
-  @ Width of the full-resolution DOOM frame in pixels.
-  constant FRAME_WIDTH = 640
-
-  @ Height of the full-resolution DOOM frame in scanlines.
-  constant FRAME_HEIGHT = 400
-
-  @ Number of palette bytes (256 entries * 3 bytes per RGB triple).
-  constant PALETTE_BYTES = 768
-
-  # ----------------------------------------------------------------------
   # Telemetry struct types
+  #
+  # The wrapped DOOM engine runs at a fixed FRAME_WIDTH x FRAME_HEIGHT
+  # palette-indexed resolution (constants in DoomConfig.fpp). The
+  # engine hands each full frame to a downsampler over a synchronous
+  # RawFrame port; the downsampler decimates it in place by the
+  # compile-time DOWNSAMPLE_FACTOR and forwards it to a telemetry
+  # processor that emits one FrameRow channel per downsampled scanline.
   # ----------------------------------------------------------------------
 
-  @ One scanline of the (possibly downsampled) DOOM frame. The pixel
-  @ array is sized for the full-resolution width; `width` gives the
-  @ number of valid leading pixels at the active downsample factor.
+  @ One scanline of the downsampled DOOM frame. The pixel array is
+  @ sized exactly to the configured downsampled width, so each row
+  @ carries no unused on-wire bytes.
   struct FrameRow {
     @ Monotonically increasing frame counter set by the engine.
     frame: U32
     @ Scanline index within the downsampled frame (0..height-1).
     row: U16
-    @ Width in pixels of this row. Only the first `width` bytes of
-    @ `pixels` are valid; trailing bytes are zero.
+    @ Width in pixels of this row (= Doom.DOWNSAMPLED_WIDTH).
     width: U16
     @ Palette-indexed pixel data for this scanline.
-    pixels: [Doom.FRAME_WIDTH] U8
+    pixels: [Doom.DOWNSAMPLED_WIDTH] U8
   }
 
   @ The active DOOM palette as a flat RGB byte array. Emitted with
@@ -47,21 +34,6 @@ module Doom {
     @ 256 RGB triples, packed R0,G0,B0,R1,G1,B1,...
     rgb: [Doom.PALETTE_BYTES] U8
   }
-
-  # ----------------------------------------------------------------------
-  # Downsampling
-  # ----------------------------------------------------------------------
-
-  @ Downsample factor applied to each frame dimension. Restricted to
-  @ powers of 2 that divide both FRAME_WIDTH (640) and FRAME_HEIGHT
-  @ (400) evenly (32 would give a fractional height).
-  enum DownsampleFactor : U8 {
-    X1  = 1   @< 640 x 400 pass-through
-    X2  = 2   @< 320 x 200
-    X4  = 4   @< 160 x 100
-    X8  = 8   @<  80 x  50
-    X16 = 16  @<  40 x  25
-  } default X2
 
   # ----------------------------------------------------------------------
   # Engine state enums

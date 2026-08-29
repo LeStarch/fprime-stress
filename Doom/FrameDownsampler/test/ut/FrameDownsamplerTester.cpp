@@ -56,36 +56,14 @@ void FrameDownsamplerTester::sendFrame(U32 frameNumber, U16 width, U16 height, U
 // Tests
 // ----------------------------------------------------------------------
 
-void FrameDownsamplerTester::testPassThroughAtX1() {
-    this->paramSet_DOWNSAMPLE(Doom::DownsampleFactor::X1, Fw::ParamValid::VALID);
-    this->component.loadParameters();
-
-    this->sendFrame(7U, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, FRAME_BYTES);
-
-    ASSERT_EQ(m_outCount, 1u);
-    ASSERT_EQ(m_outFrameNumber, 7U);
-    ASSERT_EQ(m_outWidth, Doom::FRAME_WIDTH);
-    ASSERT_EQ(m_outHeight, Doom::FRAME_HEIGHT);
-    ASSERT_EQ(m_outSize, +FRAME_BYTES);
-    // Same buffer forwarded, contents untouched.
-    ASSERT_EQ(m_outData, m_pixels);
-    for (U32 i = 0; i < FRAME_BYTES; i++) {
-        ASSERT_EQ(m_outPixels[i], static_cast<U8>(i % 251U)) << "pixel " << i;
-    }
-    ASSERT_EVENTS_InvalidFrame_SIZE(0);
-}
-
-void FrameDownsamplerTester::testDecimatesInPlace(Doom::DownsampleFactor::T factor) {
-    this->paramSet_DOWNSAMPLE(factor, Fw::ParamValid::VALID);
-    this->component.loadParameters();
-
-    const U16 f = static_cast<U16>(factor);
+void FrameDownsamplerTester::testDecimatesInPlace() {
+    const U16 f = static_cast<U16>(Doom::DOWNSAMPLE_FACTOR);
     const U16 w = Doom::FRAME_WIDTH;
     const U16 h = Doom::FRAME_HEIGHT;
     this->sendFrame(3U, w, h, FRAME_BYTES);
 
-    const U16 outW = static_cast<U16>(w / f);
-    const U16 outH = static_cast<U16>(h / f);
+    const U16 outW = static_cast<U16>(Doom::DOWNSAMPLED_WIDTH);
+    const U16 outH = static_cast<U16>(Doom::DOWNSAMPLED_HEIGHT);
     ASSERT_EQ(m_outCount, 1u);
     ASSERT_EQ(m_outFrameNumber, 3U);
     ASSERT_EQ(m_outWidth, outW);
@@ -112,34 +90,21 @@ void FrameDownsamplerTester::testForwardsPalette() {
 }
 
 void FrameDownsamplerTester::testRejectsIndivisibleDimensions() {
-    this->paramSet_DOWNSAMPLE(Doom::DownsampleFactor::X16, Fw::ParamValid::VALID);
-    this->component.loadParameters();
-
-    // 100 x 90: 90 is not divisible by 16 - drop with an event.
-    this->sendFrame(1U, 96U, 90U, FRAME_BYTES);
+    if (Doom::DOWNSAMPLE_FACTOR <= 1) {
+        GTEST_SKIP() << "Every dimension is divisible by a factor of 1";
+    }
+    // 33 x 33 is not divisible by any configured factor > 1.
+    this->sendFrame(1U, 33U, 33U, FRAME_BYTES);
     ASSERT_EQ(m_outCount, 0u);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-    ASSERT_EVENTS_InvalidFrame(0, 96U, 90U, 16U);
+    ASSERT_EVENTS_InvalidFrame(0, 33U, 33U, static_cast<U8>(Doom::DOWNSAMPLE_FACTOR));
 }
 
 void FrameDownsamplerTester::testRejectsShortBuffer() {
-    this->paramSet_DOWNSAMPLE(Doom::DownsampleFactor::X2, Fw::ParamValid::VALID);
-    this->component.loadParameters();
-
     // Buffer smaller than width * height - drop with an event.
     this->sendFrame(1U, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, FRAME_BYTES - 1U);
     ASSERT_EQ(m_outCount, 0u);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-}
-
-void FrameDownsamplerTester::testDefaultsToX2WhenParamUnset() {
-    // No paramSet: the component falls back to the model default (X2).
-    this->component.loadParameters();
-
-    this->sendFrame(2U, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, FRAME_BYTES);
-    ASSERT_EQ(m_outCount, 1u);
-    ASSERT_EQ(m_outWidth, Doom::FRAME_WIDTH / 2U);
-    ASSERT_EQ(m_outHeight, Doom::FRAME_HEIGHT / 2U);
 }
 
 }  // namespace Doom

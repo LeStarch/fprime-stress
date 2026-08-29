@@ -5,7 +5,7 @@
 #ifndef Doom_FrameDownsamplerTester_HPP
 #define Doom_FrameDownsamplerTester_HPP
 
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include "Doom/FrameDownsampler/FrameDownsampler.hpp"
 #include "Doom/FrameDownsampler/FrameDownsamplerGTestBase.hpp"
 
@@ -24,12 +24,10 @@ class FrameDownsamplerTester final : public FrameDownsamplerGTestBase {
     // Tests
     // ------------------------------------------------------------------
 
-    void testPassThroughAtX1();
-    void testDecimatesInPlace(Doom::DownsampleFactor::T factor);
+    void testDecimatesInPlace();
     void testForwardsPalette();
     void testRejectsIndivisibleDimensions();
     void testRejectsShortBuffer();
-    void testDefaultsToX2WhenParamUnset();
 
   private:
     // Wiring and init provided by auto-generated helpers.

@@ -14,11 +14,6 @@ TEST(TlmProcessor, EmitsOneChannelPerRow) {
     tester->testEmitsOneChannelPerRow();
 }
 
-TEST(TlmProcessor, EmitsFullResolutionRows) {
-    auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
-    tester->testEmitsFullResolutionRows();
-}
-
 TEST(TlmProcessor, ReEmitsPalette) {
     auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
     tester->testReEmitsPalette();

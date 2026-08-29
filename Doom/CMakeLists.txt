@@ -1,15 +1,19 @@
 ####
-# Doom: shared FPP types (constants, structs, enums, ports) used by the
+# Doom: shared FPP types (structs, enums, ports) used by the
 # DoomEngine, FrameDownsampler, and FrameTlmProcessor components, each
 # of which lives in its own subdirectory alongside the DoomSubtopology
-# that wires them together.
+# that wires them together. All compile-time configuration lives in
+# DoomConfig/DoomConfig.fpp.
 ####
 
-set(SOURCE_FILES
-    "${CMAKE_CURRENT_LIST_DIR}/Doom.fpp"
+register_fprime_module(
+    AUTOCODER_INPUTS
+        "${CMAKE_CURRENT_LIST_DIR}/Doom.fpp"
+    DEPENDS
+        Doom_DoomConfig
 )
-register_fprime_module()
 
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DoomConfig/")
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DoomEngine/")
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FrameDownsampler/")
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor/")

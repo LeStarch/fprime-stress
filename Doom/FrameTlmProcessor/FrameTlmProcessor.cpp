@@ -222,10 +222,12 @@ void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
                                         U16 height,
                                         Fw::Buffer& pixels) {
     // Validate rather than assert: dimensions arrive over a port and a
-    // misbehaving upstream must not take the deployment down.
+    // misbehaving upstream must not take the deployment down. The row
+    // pixel array is sized exactly to the configured downsampled
+    // width, so any other width cannot be represented.
     const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
-    if ((width == 0U) || (height == 0U) || (width > MAX_WIDTH) || (height > MAX_ROWS) ||
-        (pixels.getData() == nullptr) || (pixels.getSize() < frameBytes)) {
+    if ((width != ROW_WIDTH) || (height == 0U) || (height > MAX_ROWS) || (pixels.getData() == nullptr) ||
+        (pixels.getSize() < frameBytes)) {
         this->log_WARNING_LO_InvalidFrame(width, height);
         return;
     }
@@ -236,9 +238,6 @@ void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
     U8* const rowPixels = m_row.get_pixels();
 
     // One channel per scanline, emitted only to the incoming height.
-    // Trailing bytes beyond `width` are zeroed once here and stay zero
-    // because every row of this frame shares the same width.
-    (void)::memset(&rowPixels[width], 0, static_cast<size_t>(MAX_WIDTH - width));
     for (U16 r = 0; r < height; r++) {
         (void)::memcpy(rowPixels, &src[static_cast<U32>(r) * static_cast<U32>(width)], width);
         m_row.set_row(r);

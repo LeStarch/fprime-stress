@@ -24,7 +24,7 @@
 #define Doom_DoomEngine_HPP
 
 #include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
 
@@ -53,13 +53,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
-    //! Capacity (in frames) of the screen-wipe melt playback buffer.
-    //! The melt animation spans roughly 40-70 engine draws; 80 gives
-    //! margin above the observed worst case while bounding the static
-    //! footprint to 80 x 256 KB = ~20.5 MB. Overflowing frames are
-    //! dropped and counted in FramesDropped (the wipe then cuts to the
-    //! live frame early).
-    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 80;
+    //! Capacity (in frames) of the screen-wipe melt playback buffer,
+    //! configured in DoomConfig.fpp. Each slot costs FRAME_BYTES of
+    //! static footprint; overflowing frames are dropped and counted in
+    //! FramesDropped (the wipe then cuts to the live frame early).
+    static constexpr FwSizeType MELT_QUEUE_CAPACITY = Doom::MELT_QUEUE_CAPACITY;
 
     //! Microseconds slept per forceStart rendezvous poll.
     static constexpr U32 RENDEZVOUS_DELAY_USEC = 1000;

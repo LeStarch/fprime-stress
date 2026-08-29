@@ -5,7 +5,7 @@
 #ifndef Doom_FrameTlmProcessor_HPP
 #define Doom_FrameTlmProcessor_HPP
 
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include "Doom/FrameTlmProcessor/FrameTlmProcessorComponentAc.hpp"
 
 namespace Doom {
@@ -15,8 +15,8 @@ class FrameTlmProcessor final : public FrameTlmProcessorComponentBase {
     //! Maximum number of row channels (FrameRow000..FrameRow399).
     static constexpr U16 MAX_ROWS = Doom::FRAME_HEIGHT;
 
-    //! Maximum pixels per row channel.
-    static constexpr U16 MAX_WIDTH = Doom::FRAME_WIDTH;
+    //! Exact pixels per row channel (configured downsampled width).
+    static constexpr U16 ROW_WIDTH = Doom::DOWNSAMPLED_WIDTH;
 
     explicit FrameTlmProcessor(const char* compName);
     ~FrameTlmProcessor() override;

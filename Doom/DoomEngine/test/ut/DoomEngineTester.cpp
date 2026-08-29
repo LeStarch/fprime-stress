@@ -4,7 +4,7 @@
 // ======================================================================
 
 #include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 
 extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric.h"

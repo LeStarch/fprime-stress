@@ -40,47 +40,29 @@ void FrameTlmProcessorTester::sendFrame(U32 frameNumber, U16 width, U16 height, 
 // ----------------------------------------------------------------------
 
 void FrameTlmProcessorTester::testEmitsOneChannelPerRow() {
-    // A 320 x 200 (X2-downsampled) frame: rows 0..199 each get their
-    // own channel; rows 200+ stay silent.
-    const U16 w = 320;
-    const U16 h = 200;
+    // A configured downsampled frame: rows 0..h-1 each get their own
+    // channel; rows h and beyond stay silent.
+    const U16 w = static_cast<U16>(Doom::DOWNSAMPLED_WIDTH);
+    const U16 h = static_cast<U16>(Doom::DOWNSAMPLED_HEIGHT);
     this->sendFrame(5U, w, h, static_cast<U32>(w) * static_cast<U32>(h));
 
     ASSERT_TLM_SIZE(h);
     ASSERT_TLM_FrameRow000_SIZE(1);
-    ASSERT_TLM_FrameRow199_SIZE(1);
-    ASSERT_TLM_FrameRow200_SIZE(0);
-    ASSERT_TLM_FrameRow399_SIZE(0);
+    if (h < Doom::FRAME_HEIGHT) {
+        ASSERT_TLM_FrameRow399_SIZE(0);
+    } else {
+        ASSERT_TLM_FrameRow399_SIZE(1);
+    }
 
-    // First and last emitted rows carry the right metadata and payload.
+    // The first emitted row carries the right metadata and payload.
     const Doom::FrameRow& first = this->tlmHistory_FrameRow000->at(0).arg;
     ASSERT_EQ(first.get_frame(), 5U);
     ASSERT_EQ(first.get_row(), 0U);
     ASSERT_EQ(first.get_width(), w);
-    const Doom::FrameRow& last = this->tlmHistory_FrameRow199->at(0).arg;
-    ASSERT_EQ(last.get_frame(), 5U);
-    ASSERT_EQ(last.get_row(), 199U);
-    ASSERT_EQ(last.get_width(), w);
-    const U32 lastOffset = 199U * static_cast<U32>(w);
     for (U32 i = 0; i < w; i++) {
         ASSERT_EQ(first.get_pixels()[i], static_cast<U8>(i % 251U)) << "row 0 pixel " << i;
-        ASSERT_EQ(last.get_pixels()[i], static_cast<U8>((lastOffset + i) % 251U)) << "row 199 pixel " << i;
-    }
-    // Bytes beyond the row width are zeroed.
-    for (U32 i = w; i < Doom::FRAME_WIDTH; i++) {
-        ASSERT_EQ(first.get_pixels()[i], 0U) << "trailing byte " << i;
     }
     ASSERT_EVENTS_InvalidFrame_SIZE(0);
-}
-
-void FrameTlmProcessorTester::testEmitsFullResolutionRows() {
-    // A full 640 x 400 frame uses every modeled row channel.
-    this->sendFrame(1U, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, FRAME_BYTES);
-    ASSERT_TLM_SIZE(Doom::FRAME_HEIGHT);
-    ASSERT_TLM_FrameRow399_SIZE(1);
-    const Doom::FrameRow& last = this->tlmHistory_FrameRow399->at(0).arg;
-    ASSERT_EQ(last.get_row(), 399U);
-    ASSERT_EQ(last.get_width(), Doom::FRAME_WIDTH);
 }
 
 void FrameTlmProcessorTester::testReEmitsPalette() {
@@ -92,21 +74,23 @@ void FrameTlmProcessorTester::testReEmitsPalette() {
 }
 
 void FrameTlmProcessorTester::testRejectsOversizedDimensions() {
+    const U16 w = static_cast<U16>(Doom::DOWNSAMPLED_WIDTH);
+
     // Height beyond the modeled channels - drop with an event.
-    this->sendFrame(1U, 320U, 401U, FRAME_BYTES);
+    this->sendFrame(1U, w, 401U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-    ASSERT_EVENTS_InvalidFrame(0, 320U, 401U);
+    ASSERT_EVENTS_InvalidFrame(0, w, 401U);
 
-    // Width beyond the modeled row payload - drop with an event.
-    this->sendFrame(1U, 641U, 200U, FRAME_BYTES);
+    // Width other than the configured row width - drop with an event.
+    this->sendFrame(1U, static_cast<U16>(w + 1U), 100U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(2);
 }
 
 void FrameTlmProcessorTester::testRejectsShortBuffer() {
-    const U16 w = 320;
-    const U16 h = 200;
+    const U16 w = static_cast<U16>(Doom::DOWNSAMPLED_WIDTH);
+    const U16 h = static_cast<U16>(Doom::DOWNSAMPLED_HEIGHT);
     this->sendFrame(1U, w, h, (static_cast<U32>(w) * static_cast<U32>(h)) - 1U);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);

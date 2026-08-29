@@ -17,7 +17,7 @@
 // ======================================================================
 #include "Doom/DoomEngine/DoomEngine.hpp"
 
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 
 #include <Fw/Buffer/Buffer.hpp>
 #include <Fw/Types/Assert.hpp>

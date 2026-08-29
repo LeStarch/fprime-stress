@@ -135,32 +135,27 @@ target_compile_options(fprime_stress_doomgeneric
 # ----------------------------------------------------------------------
 # F Prime DoomEngine component
 # ----------------------------------------------------------------------
-set(SOURCE_FILES
-    "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.fpp"
-    "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.cpp"
-)
-set(HEADER_FILES
-    "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.hpp"
-)
-set(MOD_DEPS
-    Os
-    Fw_Logger
-    fprime_stress_doomgeneric
-)
-register_fprime_module()
-
-# Unit tests live under test/ut/ and are registered when the test
-# subdirectory exists. Keep this guarded so a fresh check-out without
-# tests still builds the production target.
-if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp")
-    set(UT_SOURCE_FILES
+register_fprime_module(
+    AUTOCODER_INPUTS
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.fpp"
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.cpp"
+    HEADERS
+        "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.hpp"
+    DEPENDS
+        Os
+        Fw_Logger
+        fprime_stress_doomgeneric
+)
+
+### UTs ###
+register_fprime_ut(
+    AUTOCODER_INPUTS
+        "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.fpp"
+    SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomTestMain.cpp"
-    )
-    set(UT_HEADER_FILES
+    HEADERS
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/DoomEngineTester.hpp"
-    )
-    set(UT_AUTO_HELPERS ON)
-    register_fprime_ut()
-endif()
+    UT_AUTO_HELPERS
+)

@@ -3,24 +3,23 @@
 # FrameRow telemetry channel per scanline of the downsampled frame.
 ####
 
-set(SOURCE_FILES
-    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
-    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.cpp"
-)
-set(HEADER_FILES
-    "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.hpp"
-)
-register_fprime_module()
-
-if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.cpp")
-    set(UT_SOURCE_FILES
+register_fprime_module(
+    AUTOCODER_INPUTS
         "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.cpp"
+    HEADERS
+        "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.hpp"
+)
+
+### UTs ###
+register_fprime_ut(
+    AUTOCODER_INPUTS
+        "${CMAKE_CURRENT_LIST_DIR}/FrameTlmProcessor.fpp"
+    SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.cpp"
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTests.cpp"
-    )
-    set(UT_HEADER_FILES
+    HEADERS
         "${CMAKE_CURRENT_LIST_DIR}/test/ut/FrameTlmProcessorTester.hpp"
-    )
-    set(UT_AUTO_HELPERS ON)
-    register_fprime_ut()
-endif()
+    UT_AUTO_HELPERS
+)

@@ -5,7 +5,7 @@
 #ifndef Doom_FrameTlmProcessorTester_HPP
 #define Doom_FrameTlmProcessorTester_HPP
 
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include "Doom/FrameTlmProcessor/FrameTlmProcessor.hpp"
 #include "Doom/FrameTlmProcessor/FrameTlmProcessorGTestBase.hpp"
 
@@ -25,7 +25,6 @@ class FrameTlmProcessorTester final : public FrameTlmProcessorGTestBase {
     // ------------------------------------------------------------------
 
     void testEmitsOneChannelPerRow();
-    void testEmitsFullResolutionRows();
     void testReEmitsPalette();
     void testRejectsOversizedDimensions();
     void testRejectsShortBuffer();
