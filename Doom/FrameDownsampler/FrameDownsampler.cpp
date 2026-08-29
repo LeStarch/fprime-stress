@@ -8,7 +8,7 @@
 // buffer: every source index >= its destination index, so a forward
 // traversal never overwrites unread data. No copy, no allocation.
 // ======================================================================
-#include "Doom/FrameDownsampler.hpp"
+#include "Doom/FrameDownsampler/FrameDownsampler.hpp"
 
 namespace Doom {
 

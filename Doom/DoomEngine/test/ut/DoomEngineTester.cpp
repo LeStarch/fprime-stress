@@ -3,11 +3,11 @@
 // \brief  Unit-test harness for the DoomEngine component.
 // ======================================================================
 
-#include "Doom/test/ut/DoomEngineTester.hpp"
+#include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
 #include "Doom/FppConstantsAc.hpp"
 
 extern "C" {
-#include "Doom/doomgeneric/doomgeneric.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric.h"
 }
 
 namespace Doom {

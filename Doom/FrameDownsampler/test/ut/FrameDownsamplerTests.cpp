@@ -1,13 +1,10 @@
 // ======================================================================
 // \title  FrameDownsamplerTests.cpp
-// \brief  GoogleTest cases for the FrameDownsampler unit tests.
-//
-// Kept in its own translation unit: each generated GTestBase header
-// defines ASSERT_EVENTS_* macros, and components sharing an event name
-// (InvalidFrame) would collide if included together.
+// \brief  GoogleTest cases and entrypoint for the FrameDownsampler
+//         unit tests.
 // ======================================================================
 
-#include "Doom/test/ut/FrameDownsamplerTester.hpp"
+#include "Doom/FrameDownsampler/test/ut/FrameDownsamplerTester.hpp"
 
 #include <memory>
 
@@ -55,4 +52,9 @@ TEST(Downsampler, RejectsShortBuffer) {
 TEST(Downsampler, DefaultsToX2WhenParamUnset) {
     auto tester = std::make_unique<Doom::FrameDownsamplerTester>();
     tester->testDefaultsToX2WhenParamUnset();
+}
+
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

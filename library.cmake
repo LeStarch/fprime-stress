@@ -10,4 +10,3 @@
 # DoomSubtopology end up in the F Prime module index.
 ####
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/Doom/")
-add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DoomSubtopology/")

@@ -3,7 +3,7 @@
 // \brief  Unit-test harness for the FrameDownsampler component.
 // ======================================================================
 
-#include "Doom/test/ut/FrameDownsamplerTester.hpp"
+#include "Doom/FrameDownsampler/test/ut/FrameDownsamplerTester.hpp"
 
 #include <cstring>
 

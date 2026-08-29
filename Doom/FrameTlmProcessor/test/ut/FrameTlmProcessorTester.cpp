@@ -3,7 +3,7 @@
 // \brief  Unit-test harness for the FrameTlmProcessor component.
 // ======================================================================
 
-#include "Doom/test/ut/FrameTlmProcessorTester.hpp"
+#include "Doom/FrameTlmProcessor/test/ut/FrameTlmProcessorTester.hpp"
 
 #include <cstring>
 

@@ -6,8 +6,8 @@
 #define Doom_FrameDownsamplerTester_HPP
 
 #include "Doom/FppConstantsAc.hpp"
-#include "Doom/FrameDownsampler.hpp"
-#include "Doom/FrameDownsamplerGTestBase.hpp"
+#include "Doom/FrameDownsampler/FrameDownsampler.hpp"
+#include "Doom/FrameDownsampler/FrameDownsamplerGTestBase.hpp"
 
 namespace Doom {
 

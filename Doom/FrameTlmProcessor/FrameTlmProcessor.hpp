@@ -6,7 +6,7 @@
 #define Doom_FrameTlmProcessor_HPP
 
 #include "Doom/FppConstantsAc.hpp"
-#include "Doom/FrameTlmProcessorComponentAc.hpp"
+#include "Doom/FrameTlmProcessor/FrameTlmProcessorComponentAc.hpp"
 
 namespace Doom {
 

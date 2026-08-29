@@ -3,11 +3,7 @@
 // \brief  GoogleTest entrypoint for the DoomEngine unit tests.
 // ======================================================================
 
-// FrameDownsampler / FrameTlmProcessor tests live in their own
-// translation units: each generated GTestBase header defines
-// ASSERT_EVENTS_* macros, and components sharing an event name
-// (InvalidFrame) would collide if included together.
-#include "Doom/test/ut/DoomEngineTester.hpp"
+#include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
 
 #include <memory>
 

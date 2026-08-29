@@ -1,13 +1,10 @@
 // ======================================================================
 // \title  FrameTlmProcessorTests.cpp
-// \brief  GoogleTest cases for the FrameTlmProcessor unit tests.
-//
-// Kept in its own translation unit: each generated GTestBase header
-// defines ASSERT_EVENTS_* macros, and components sharing an event name
-// (InvalidFrame) would collide if included together.
+// \brief  GoogleTest cases and entrypoint for the FrameTlmProcessor
+//         unit tests.
 // ======================================================================
 
-#include "Doom/test/ut/FrameTlmProcessorTester.hpp"
+#include "Doom/FrameTlmProcessor/test/ut/FrameTlmProcessorTester.hpp"
 
 #include <memory>
 
@@ -35,4 +32,9 @@ TEST(TlmProcessor, RejectsOversizedDimensions) {
 TEST(TlmProcessor, RejectsShortBuffer) {
     auto tester = std::make_unique<Doom::FrameTlmProcessorTester>();
     tester->testRejectsShortBuffer();
+}
+
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }

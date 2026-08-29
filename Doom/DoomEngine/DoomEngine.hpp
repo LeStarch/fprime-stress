@@ -23,7 +23,7 @@
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
 
-#include "Doom/DoomEngineComponentAc.hpp"
+#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
 #include "Doom/FppConstantsAc.hpp"
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>

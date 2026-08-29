@@ -5,7 +5,7 @@
 #ifndef Doom_FrameDownsampler_HPP
 #define Doom_FrameDownsampler_HPP
 
-#include "Doom/FrameDownsamplerComponentAc.hpp"
+#include "Doom/FrameDownsampler/FrameDownsamplerComponentAc.hpp"
 
 namespace Doom {
 

@@ -6,8 +6,8 @@
 #define Doom_FrameTlmProcessorTester_HPP
 
 #include "Doom/FppConstantsAc.hpp"
-#include "Doom/FrameTlmProcessor.hpp"
-#include "Doom/FrameTlmProcessorGTestBase.hpp"
+#include "Doom/FrameTlmProcessor/FrameTlmProcessor.hpp"
+#include "Doom/FrameTlmProcessor/FrameTlmProcessorGTestBase.hpp"
 
 namespace Doom {
 

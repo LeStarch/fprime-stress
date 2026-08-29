@@ -199,9 +199,9 @@ fprime-get-doom    # auto-discovers build-artifacts/, drops doom1.wad in data/
 cd build-artifacts/Linux/FprimeStressReference_ReferenceDeployment/bin
 ./FprimeStressReference_ReferenceDeployment -a 127.0.0.1 -p 50100 -S
 
-# 5) (optional) install the JS GDS plugin so you can watch in a browser
+# 5) (optional) watch in a browser via the YAMCS ground layer
 cd ../../../..    # back to project root from build-artifacts/<plat>/<dep>/bin/
-lib/fprime-stress/gds-plugin/install.sh
+fprime-doom      # see tools/fprime-doom in fprime-stress-reference
 ```
 
 `-S` is a smoke-test convenience that auto-starts the engine from
@@ -214,19 +214,17 @@ invocation of either works after `fprime-util build` has run.
 ## Contents
 
 ```
-Doom/                           DoomEngine component
-  Doom.fpp / DoomEngine.cpp / DoomEngine.hpp
-  Commands.fppi / Telemetry.fppi / Events.fppi
-  doomgeneric/                  vendored upstream DOOM source (GPLv2)
-  test/ut/                      googletest unit tests
-DoomSubtopology/                reusable subtopology wrapper
-  DoomSubtopology.fpp
-  DoomSubtopologyConfig/        per-subtopology constants
-gds-plugin/                     JS-only fprime-gds addon
-  doom-display/                 Vue component (canvas + key bindings)
-  dashboard.xml                 Dashboard panel that hosts the addon
-  install.sh                    Drops the addon into fprime-gds and
-                                enables the Dashboard tab
+Doom/                           shared FPP types + components
+  Doom.fpp                      constants, structs, enums, ports
+  DoomEngine/                   DoomEngine component
+    doomgeneric/                vendored upstream DOOM source (GPLv2)
+    test/ut/                    googletest unit tests
+  FrameDownsampler/             in-place frame decimation component
+  FrameTlmProcessor/            per-row telemetry emission component
+  DoomSubtopology/              reusable subtopology wrapper
+    DoomSubtopology.fpp
+    DoomSubtopologyConfig/      per-subtopology constants
+  test/int/                     GDS integration tests
 yamcs-plugin/                   yamcs-web extension (fprime-yamcs)
   doom-display/                 Canvas renderer + key bindings + engine
                                 controls (Start/Stop toggle, Reset,

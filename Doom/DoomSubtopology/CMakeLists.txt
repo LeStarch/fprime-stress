@@ -14,6 +14,8 @@ register_fprime_module(
         "${CMAKE_CURRENT_LIST_DIR}/PingEntries.hpp"
     INTERFACE
     DEPENDS
-        Doom
-        DoomSubtopology_DoomSubtopologyConfig
+        Doom_DoomEngine
+        Doom_FrameDownsampler
+        Doom_FrameTlmProcessor
+        Doom_DoomSubtopology_DoomSubtopologyConfig
 )

@@ -15,7 +15,7 @@
 // (seq_cst, ordered against m_tickInProgress) before touching any
 // engine state.
 // ======================================================================
-#include "Doom/DoomEngine.hpp"
+#include "Doom/DoomEngine/DoomEngine.hpp"
 
 #include "Doom/FppConstantsAc.hpp"
 
@@ -29,13 +29,13 @@
 #include <cstring>
 
 extern "C" {
-#include "Doom/doomgeneric/doomgeneric.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric.h"
 // d_loop.h exports singletics: one game tic per TryRunTics() call.
-#include "Doom/doomgeneric/d_loop.h"
+#include "Doom/DoomEngine/doomgeneric/d_loop.h"
 // d_main.h exports D_StartTitle: return to the boot title sequence.
-#include "Doom/doomgeneric/d_main.h"
+#include "Doom/DoomEngine/doomgeneric/d_main.h"
 // i_video.h declares the engine's active palette (struct color colors[256]).
-#include "Doom/doomgeneric/i_video.h"
+#include "Doom/DoomEngine/doomgeneric/i_video.h"
 }  // extern "C"
 
 namespace Doom {

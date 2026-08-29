@@ -2,7 +2,7 @@
 // \title  FrameTlmProcessor.cpp
 // \brief  Emits downsampled frames as per-row telemetry.
 // ======================================================================
-#include "Doom/FrameTlmProcessor.hpp"
+#include "Doom/FrameTlmProcessor/FrameTlmProcessor.hpp"
 
 #include <cstring>
 

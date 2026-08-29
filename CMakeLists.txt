@@ -29,4 +29,3 @@ endif()
 # Both modules sit at the project root - register them on the F Prime
 # configuration before any deployment hooks them up.
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/Doom/")
-add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/DoomSubtopology/")

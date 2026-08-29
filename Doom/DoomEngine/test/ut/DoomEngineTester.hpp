@@ -12,8 +12,8 @@
 #ifndef Doom_DoomEngineTester_HPP
 #define Doom_DoomEngineTester_HPP
 
-#include "Doom/DoomEngine.hpp"
-#include "Doom/DoomEngineGTestBase.hpp"
+#include "Doom/DoomEngine/DoomEngine.hpp"
+#include "Doom/DoomEngine/DoomEngineGTestBase.hpp"
 
 namespace Doom {
 
