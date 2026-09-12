@@ -4,19 +4,16 @@
 
 # Commands are sync because the component is passive (no worker
 # thread) and run on the command-dispatch thread. Key handlers are a
-# short mutex-guarded enqueue; Start runs engine bring-up inline, may
-# first wait (bounded, ~1 s) for an in-flight rate-group tick, and if
-# another Start/Stop is in flight blocks until it completes (worst
-# case: a full first-Start engine bring-up).
+# short mutex-guarded enqueue; Start may first wait (bounded, ~1 s)
+# for an in-flight rate-group tick, and if another Start/Stop is in
+# flight blocks until it completes.
 
-@ Start the wrapped DOOM engine. The first Start calls
-@ doomgeneric_Create, which loads the WAD and runs DOOM's
-@ initialisation through to the first idle tick; a Start after a Stop
-@ resumes the existing engine. After this command completes, the
-@ rate-group thread (via the schedIn port) drives doomgeneric_Tick.
-@ Responds EXECUTION_ERROR if the engine is already running, the
-@ rendezvous times out (StartBusy), or the WAD cannot be opened
-@ (WadUnavailable).
+@ Start driving the DOOM engine created by initEngine at topology
+@ setup: after this command completes, the rate-group thread (via the
+@ schedIn port) drives doomgeneric_Tick. A Start after a Stop resumes
+@ the existing engine. Responds EXECUTION_ERROR if the engine is
+@ already running, the rendezvous times out (StartBusy), or the engine
+@ was never created or has faulted (EngineUnavailable).
 sync command Start \
   opcode 0
 

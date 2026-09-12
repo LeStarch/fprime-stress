@@ -23,12 +23,13 @@
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
 
-#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
-#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
+#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
 
 #include <atomic>
+#include <csetjmp>
 
 namespace Doom {
 
@@ -41,17 +42,22 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Maximum number of pending key events queued for the DOOM engine.
     static constexpr FwSizeType KEY_QUEUE_CAPACITY = 64;
 
-    //! Width of the DOOM frame in pixels.
-    static constexpr U16 FRAME_WIDTH = 640;
+    //! Width of the DOOM frame in pixels (DoomConfig.fpp; checked
+    //! against DOOMGENERIC_RESX at compile time).
+    static constexpr U16 FRAME_WIDTH = static_cast<U16>(Doom::FRAME_WIDTH);
 
-    //! Height of the DOOM frame in scanlines.
-    static constexpr U16 FRAME_HEIGHT = 400;
+    //! Height of the DOOM frame in scanlines (DoomConfig.fpp; checked
+    //! against DOOMGENERIC_RESY at compile time).
+    static constexpr U16 FRAME_HEIGHT = static_cast<U16>(Doom::FRAME_HEIGHT);
 
     //! Total bytes in one palette-indexed DOOM frame.
     static constexpr U32 FRAME_BYTES = static_cast<U32>(FRAME_WIDTH) * static_cast<U32>(FRAME_HEIGHT);
 
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
+
+    //! Maximum length of an engine fault message (matches EngineFault).
+    static constexpr FwSizeType FAULT_MESSAGE_MAX = 128;
 
     //! Capacity (in frames) of the screen-wipe melt playback buffer,
     //! configured in DoomConfig.fpp. Each slot costs FRAME_BYTES of
@@ -72,11 +78,25 @@ class DoomEngine final : public DoomEngineComponentBase {
     explicit DoomEngine(const char* compName);
     ~DoomEngine() override;
 
-    //! Set the path to the IWAD that should be passed to
-    //! doomgeneric_Create when the engine starts. Must be called before
-    //! the Start command is dispatched. Asserts if the path does not
-    //! fit in WAD_PATH_MAX (rejects rather than truncates).
+    //! Set the path to the IWAD passed to doomgeneric_Create. Must be
+    //! called before initEngine. Asserts if the path does not fit in
+    //! WAD_PATH_MAX (rejects rather than truncates).
     void setWadPath(const char* wadPath);
+
+    //! Initialization-time engine bring-up: opens the WAD and runs
+    //! doomgeneric_Create (the engine's one-shot init, including all
+    //! of its heap allocation). Call once from topology setup, before
+    //! the rate groups start; never from the rate-group thread. Returns
+    //! false (WadUnavailable or EngineFault, State FAILED) if the
+    //! engine could not be created; Start is then rejected.
+    bool initEngine();
+
+    //! Terminal engine fault, entered from the engine's I_Error/I_Quit
+    //! via the extern "C" glue. Records the fault (EngineFault event,
+    //! State FAILED, engine stopped) and longjmps out of the
+    //! doomgeneric_Create / doomgeneric_Tick call that was in progress.
+    //! Asserts if no engine call is in progress. Does not return.
+    [[noreturn]] void engineFault(const char* message);
 
     //! Accessor used by the extern "C" DG_* platform glue to reach back
     //! into the component instance. There is exactly one Doom
@@ -115,13 +135,13 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! so the title is intentionally ignored.
     void platformSetTitle(const char* title);
 
-    //! Programmatic engine bring-up. Identical to the Start command
+    //! Programmatic engine start. Identical to the Start command
     //! except no cmdResponse is emitted. Intended for the autoStart
     //! path in Main.cpp where the binary is launched headless without
     //! a GDS to dispatch the Start command. Safe to call while the
     //! rate groups are running: it rendezvouses with any in-flight
-    //! schedIn tick before touching engine state. Returns true on
-    //! success.
+    //! schedIn tick before touching engine state. Requires a prior
+    //! successful initEngine. Returns true on success.
     bool forceStart();
 
   private:
@@ -166,6 +186,9 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Record and emit the State telemetry channel.
     void publishState(EngineState state);
+
+    //! State/telemetry half of engineFault (no longjmp).
+    void recordEngineFault(const char* message);
 
     //! Pack one key event into the queue's wire format: bit 8 is the
     //! pressed flag, bits 0-7 the key code (unpacked by platformGetKey).
@@ -218,6 +241,16 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! True once doomgeneric_Create has run. The upstream engine's
     //! initialisation is one-shot, so Create is never invoked twice.
     bool m_engineCreated;
+
+    //! True once the engine has faulted (I_Error/I_Quit). Terminal:
+    //! engine state is unrecoverable, so Start is rejected thereafter.
+    std::atomic<bool> m_engineFaulted;
+
+    //! Fault return point around doomgeneric_Create / doomgeneric_Tick,
+    //! valid while m_faultJmpArmed. Only C frames lie between the
+    //! setjmp and engineFault's longjmp.
+    std::jmp_buf m_faultJmp;
+    bool m_faultJmpArmed;
 
     //! Set by Reset_cmdHandler; consumed by the rate-group thread at
     //! the top of its next running tick, which flushes input state

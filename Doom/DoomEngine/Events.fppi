@@ -39,16 +39,14 @@ event StartBusy() \
   format "Start rejected - could not rendezvous with the rate group"
 
 @ No WAD path was configured, or the configured WAD could not be
-@ opened. Start is rejected so these cases cannot take down the whole
-@ flight process via the engine's internal error handler. The check is
-@ advisory: a WAD that opens but is malformed, or is removed after the
-@ check, can still reach the upstream error handler.
+@ opened at initialization. The engine is not created and Start is
+@ rejected with EngineUnavailable.
 event WadUnavailable(
                       wadPath: string size 256 @< The WAD path that failed to open
                     ) \
   severity warning high \
   id 5 \
-  format "Start rejected - cannot open WAD file {}"
+  format "Engine init rejected - cannot open WAD file {}"
 
 @ The game was reset back to its initial (title screen) state in
 @ response to a Reset command.
@@ -57,9 +55,26 @@ event EngineReset() \
   id 6 \
   format "DOOM engine reset to initial state"
 
-@ A Reset command was issued before the engine was ever started;
+@ A Reset command was issued with no created (or a faulted) engine;
 @ there is no game state to reset.
 event ResetNotStarted() \
   severity warning low \
   id 7 \
-  format "Reset ignored - engine has never been started"
+  format "Reset ignored - engine not initialized"
+
+@ Start was rejected because initEngine did not succeed at
+@ initialization, or the engine has since faulted (EngineFault).
+event EngineUnavailable() \
+  severity warning high \
+  id 8 \
+  format "Start rejected - engine not initialized or faulted"
+
+@ The engine raised an internal fatal error (I_Error) or requested to
+@ quit (I_Quit). The engine is stopped and permanently unavailable;
+@ State is FAILED. Replaces the upstream handler's process exit().
+event EngineFault(
+                   message: string size 128 @< The engine's error message
+                 ) \
+  severity warning high \
+  id 9 \
+  format "DOOM engine fault: {}"

@@ -13,8 +13,7 @@ extern "C" {
 namespace Doom {
 
 DoomEngineTester::DoomEngineTester()
-    : DoomEngineGTestBase("DoomEngineTester", DoomEngineTester::MAX_HISTORY_SIZE),
-      component("DoomEngine") {
+    : DoomEngineGTestBase("DoomEngineTester", DoomEngineTester::MAX_HISTORY_SIZE), component("DoomEngine") {
     this->initComponents();
     this->connectPorts();
 }
@@ -271,6 +270,15 @@ void DoomEngineTester::testVirtualSleepAdvancesTicks() {
 void DoomEngineTester::testVariableRateContextAdvancesClock() {
     // Context 0 keeps the OS clock; a nonzero context (microseconds
     // per tick) switches the engine clock to accumulated tick time.
+    // Stopped ticks must leave the clock alone (forceStart owns it).
+    this->invoke_to_schedIn(0, 10000U);
+    ASSERT_FALSE(this->component.m_useTickTime);
+    ASSERT_EQ(this->component.m_tickElapsedUsec, 0U);
+
+    // Running ticks: melt playback stands in for doomgeneric_Tick.
+    this->component.m_engineCreated = true;
+    this->component.m_engineRunning.store(true);
+    this->component.m_meltCount = 12U;
     this->invoke_to_schedIn(0, 0);
     ASSERT_FALSE(this->component.m_useTickTime);
 
@@ -288,6 +296,12 @@ void DoomEngineTester::testVariableRateContextAdvancesClock() {
     // A later context-0 tick does not advance or rewind the clock.
     this->invoke_to_schedIn(0, 0);
     ASSERT_EQ(this->component.platformGetTicksMs(), 105U);
+
+    // Nor does a stopped tick with a context.
+    this->component.m_engineRunning.store(false);
+    this->invoke_to_schedIn(0, 10000U);
+    ASSERT_EQ(this->component.platformGetTicksMs(), 105U);
+    this->component.m_engineCreated = false;
 }
 
 void DoomEngineTester::testDrawFrameEmitsFirstDrawAndBuffersMelt() {
@@ -338,8 +352,7 @@ void DoomEngineTester::testSchedInPlaysBackMeltFrames() {
     ASSERT_EQ(this->m_frameCaptureCount, 2u);
     // The palette is re-emitted with every frame, replays included.
     ASSERT_from_paletteOut_SIZE(2);
-    ASSERT_EQ(this->fromPortHistory_paletteOut->at(1).palette.get_generation(),
-              this->component.m_paletteGeneration);
+    ASSERT_EQ(this->fromPortHistory_paletteOut->at(1).palette.get_generation(), this->component.m_paletteGeneration);
     const FrameCapture& replayed = this->m_frameCaptures[1];
     ASSERT_EQ(replayed.frameNumber, 2U);
     ASSERT_EQ(replayed.width, +DoomEngine::FRAME_WIDTH);
@@ -420,23 +433,51 @@ void DoomEngineTester::testKeyTapAllOrNothing() {
 }
 
 void DoomEngineTester::testStartRejectsMissingWad() {
-    // A missing WAD must reject the Start (EXECUTION_ERROR + FAILED)
-    // instead of letting the upstream I_Error exit the process.
+    // A missing WAD must fail initEngine (WadUnavailable + FAILED)
+    // without creating the engine; Start is then EngineUnavailable.
     this->component.setWadPath("/nonexistent/doom1.wad");
+    ASSERT_FALSE(this->component.initEngine());
+    ASSERT_FALSE(this->component.m_engineCreated);
+    ASSERT_EVENTS_WadUnavailable_SIZE(1);
+    ASSERT_EVENTS_WadUnavailable(0, "/nonexistent/doom1.wad");
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_WadUnavailable_SIZE(1);
-    ASSERT_EVENTS_WadUnavailable(0, "/nonexistent/doom1.wad");
+    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
-    ASSERT_TLM_State_SIZE(1);
-    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+    ASSERT_TLM_State_SIZE(2);
+    ASSERT_TLM_State(1, Doom::EngineState::FAILED);
     ASSERT_FALSE(this->component.m_engineRunning.load());
 
     // FAILED persists across schedIn heartbeats (not clobbered by OFF).
     this->invoke_to_schedIn(0, 0);
-    ASSERT_TLM_State_SIZE(2);
-    ASSERT_TLM_State(1, Doom::EngineState::FAILED);
+    ASSERT_TLM_State_SIZE(3);
+    ASSERT_TLM_State(2, Doom::EngineState::FAILED);
+}
+
+void DoomEngineTester::testEngineFaultStopsEngine() {
+    // An engine fault (I_Error/I_Quit trampoline) stops the engine,
+    // emits EngineFault, publishes FAILED, and rejects Start/Reset.
+    this->component.m_engineCreated = true;
+    this->component.m_engineRunning.store(true);
+    this->component.recordEngineFault("Z_Malloc: failed on allocation of 42 bytes");
+    ASSERT_FALSE(this->component.m_engineRunning.load());
+    ASSERT_TRUE(this->component.m_engineFaulted.load());
+    ASSERT_EVENTS_EngineFault_SIZE(1);
+    ASSERT_EVENTS_EngineFault(0, "Z_Malloc: failed on allocation of 42 bytes");
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
+    this->sendCmd_Reset(TEST_INSTANCE_ID, 1);
+    ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RESET, 1, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_ResetNotStarted_SIZE(1);
+    this->component.m_engineCreated = false;
 }
 
 void DoomEngineTester::testHeartbeatSelfHealsStaleRunning() {
@@ -464,15 +505,26 @@ void DoomEngineTester::testStartCommandRejectsWhenRunning() {
 }
 
 void DoomEngineTester::testStartRejectsUnconfiguredWad() {
-    // No WAD path configured: Start must reject rather than let the
-    // upstream auto-search reach I_Error/exit.
-    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
-    ASSERT_CMD_RESPONSE_SIZE(1);
-    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    // No WAD path configured: initEngine must reject rather than let
+    // the upstream auto-search run.
+    ASSERT_FALSE(this->component.initEngine());
+    ASSERT_FALSE(this->component.m_engineCreated);
     ASSERT_EVENTS_WadUnavailable_SIZE(1);
     ASSERT_EVENTS_WadUnavailable(0, "(no WAD path configured)");
     ASSERT_TLM_State_SIZE(1);
     ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+}
+
+void DoomEngineTester::testStartRejectsWithoutInit() {
+    // Start with no initEngine: EngineUnavailable, FAILED, no engine.
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
+    ASSERT_EVENTS_WadUnavailable_SIZE(0);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+    ASSERT_FALSE(this->component.m_engineRunning.load());
 }
 
 void DoomEngineTester::testForceStartResumesAfterStop() {

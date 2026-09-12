@@ -13,9 +13,12 @@ module Doom {
   @ Engine pacing is driven entirely from the schedIn port: each call
   @ runs exactly one doomgeneric_Tick (one DOOM frame of game logic)
   @ or replays one buffered screen-wipe melt frame on the rate-group
-  @ thread. doomgeneric_Create is invoked synchronously by the first
-  @ Start after rendezvousing with any in-flight tick; a Start after a
-  @ Stop resumes the existing engine.
+  @ thread. doomgeneric_Create runs once at topology setup (initEngine,
+  @ before the rate groups start); Start rendezvouses with any in-flight
+  @ tick and then enables ticking, and a Start after a Stop resumes the
+  @ existing engine. The engine's fatal-error path (I_Error/I_Quit) is
+  @ redirected to an EngineFault event plus State FAILED instead of a
+  @ process exit.
   @
   @ Declared passive: schedIn is sync (runs on the rate-group thread)
   @ and all command handlers are sync (run on the cmdDispatch thread),

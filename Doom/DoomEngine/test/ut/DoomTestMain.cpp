@@ -133,6 +133,18 @@ TEST(OffNominal, ForceStartWhenAlreadyRunning) {
     tester->testForceStartWhenAlreadyRunning();
 }
 
+TEST(OffNominal, StartRejectsWithoutInit) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testStartRejectsWithoutInit();
+}
+
+TEST(OffNominal, EngineFaultStopsEngine) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testEngineFaultStopsEngine();
+}
+
 TEST(Nominal, VariableRateContextAdvancesClock) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
