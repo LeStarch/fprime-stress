@@ -1,9 +1,10 @@
 # ======================================================================
 # Doom subtopology
 #
-# Wraps the Doom component plus a dedicated BufferManager so that any
-# deployment can drop the whole game-engine subsystem in by adding a
-# single `instance DoomSubtopology.Subtopology` to its topology.
+# Wraps the DoomEngine, FrameDownsampler and FrameTlmProcessor
+# components plus a dedicated BufferManager so that any deployment can
+# drop the whole game-engine subsystem in by adding a single
+# `instance DoomSubtopology.Subtopology` to its topology.
 #
 # Deployments are expected to wire:
 #   * Subtopology.schedIn   <- a RateGroup member out port (35 Hz)
