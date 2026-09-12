@@ -1,8 +1,8 @@
 ####
-# fprime-stress: an out-of-tree F Prime library containing a single
-# passive component that wraps the open-source DOOM engine, plus a
-# DoomSubtopology that lets any deployment absorb the whole
-# subsystem in one `instance Doom.Subtopology` declaration.
+# fprime-stress: an out-of-tree F Prime library containing the passive
+# DoomEngine / FrameDownsampler / FrameTlmProcessor components plus a
+# DoomSubtopology that lets any deployment absorb the whole subsystem
+# in one `instance DoomSubtopology.Subtopology` declaration.
 #
 # This is library-only - it does NOT register a deployment. To
 # exercise it as a runnable binary use the companion deployment in

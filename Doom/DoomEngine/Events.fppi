@@ -42,7 +42,7 @@ event StartBusy() \
 @ opened. Start is rejected so these cases cannot take down the whole
 @ flight process via the engine's internal error handler. The check is
 @ advisory: a WAD that opens but is malformed, or is removed after the
-@ check, can still reach the vendored error handler.
+@ check, can still reach the upstream error handler.
 event WadUnavailable(
                       wadPath: string size 256 @< The WAD path that failed to open
                     ) \

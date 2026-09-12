@@ -6,7 +6,7 @@
 # single `instance DoomSubtopology.Subtopology` to its topology.
 #
 # Deployments are expected to wire:
-#   * Subtopology.schedIn   <- a RateGroup member out port (~30 Hz)
+#   * Subtopology.schedIn   <- a RateGroup member out port (35 Hz)
 #   * The standard F Prime command / event / telemetry / time
 #     interfaces are imported by the doom instance via Fw.Command /
 #     Fw.Event / Fw.Channel / time get port; the enclosing topology's
