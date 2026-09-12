@@ -488,11 +488,18 @@ bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
     bool ok = false;
     bool emitOverflow = false;
     m_keyMutex.lock();
-    // Every received event counts toward the input rate windows,
+    // Every received key event counts toward the input rate windows,
     // regardless of whether the queue had room. 2 bytes per event
     // (pressed flag byte + key code byte) - documented in Telemetry.fppi.
-    m_inputEventsThisWindow += static_cast<U32>(count);
-    m_inputBytesThisWindow += static_cast<U32>(count) * 2U;
+    // Tic barriers are bookkeeping, not input, so they are not counted.
+    U32 events = 0U;
+    for (FwSizeType i = 0; i < count; i++) {
+        if (entries[i] != KEY_ENTRY_TIC_BARRIER) {
+            events++;
+        }
+    }
+    m_inputEventsThisWindow += events;
+    m_inputBytesThisWindow += events * 2U;
     // All-or-nothing: either every entry fits or none is queued (a
     // partial down/up tap would leave the key stuck down).
     if ((m_keyQueueCount + count) <= KEY_QUEUE_CAPACITY) {
@@ -504,7 +511,7 @@ bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
         m_overflowReported = false;
         ok = true;
     } else {
-        m_keysDropped += static_cast<U32>(count);
+        m_keysDropped += events;
         if (!m_overflowReported) {
             m_overflowReported = true;
             emitOverflow = true;
@@ -523,8 +530,11 @@ bool DoomEngine::enqueueKey(bool pressed, U8 code) {
 }
 
 bool DoomEngine::enqueueKeyTap(U8 code) {
-    const U16 entries[2] = {packKeyEntry(true, code), packKeyEntry(false, code)};
-    return this->enqueueKeyEvents(entries, 2);
+    // The barrier holds the release until the next tic: DOOM's responder
+    // clears a key pressed and released within one tic before the ticcmd
+    // builder samples it, so a same-tic tap is a no-op for gameplay keys.
+    const U16 entries[3] = {packKeyEntry(true, code), KEY_ENTRY_TIC_BARRIER, packKeyEntry(false, code)};
+    return this->enqueueKeyEvents(entries, 3);
 }
 
 bool DoomEngine::platformGetKey(bool& pressed, U8& code) {
@@ -534,9 +544,11 @@ bool DoomEngine::platformGetKey(bool& pressed, U8& code) {
         const U16 entry = m_keyQueue[m_keyQueueHead];
         m_keyQueueHead = (m_keyQueueHead + 1U) % KEY_QUEUE_CAPACITY;
         m_keyQueueCount--;
-        pressed = ((entry >> 8) & 0x01U) != 0U;
-        code = static_cast<U8>(entry & 0xFFU);
-        drained = true;
+        if (entry != KEY_ENTRY_TIC_BARRIER) {
+            pressed = ((entry >> 8) & 0x01U) != 0U;
+            code = static_cast<U8>(entry & 0xFFU);
+            drained = true;
+        }
     }
     m_keyMutex.unLock();
     return drained;

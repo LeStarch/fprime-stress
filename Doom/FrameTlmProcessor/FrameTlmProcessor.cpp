@@ -13,6 +13,14 @@ static_assert(FrameTlmProcessor::MAX_ROWS == 400,
               "exactly 400 rows");
 static_assert(FrameTlmProcessor::ROW_HEIGHT <= FrameTlmProcessor::MAX_ROWS,
               "DOWNSAMPLED_HEIGHT must not exceed the FrameRow channel count");
+// tlmWrite asserts if a channel value overflows Fw::TlmBuffer; deployments
+// must raise FW_COM_BUFFER_MAX_SIZE (the reference uses 1024).
+static_assert(static_cast<FwSizeType>(Doom::Palette::SERIALIZED_SIZE) <=
+                  static_cast<FwSizeType>(FW_TLM_BUFFER_MAX_SIZE),
+              "FW_COM_BUFFER_MAX_SIZE too small for the PaletteOut channel");
+static_assert(static_cast<FwSizeType>(Doom::FrameRow::SERIALIZED_SIZE) <=
+                  static_cast<FwSizeType>(FW_TLM_BUFFER_MAX_SIZE),
+              "FW_COM_BUFFER_MAX_SIZE too small for a FrameRow channel");
 
 // Row-index -> channel-writer dispatch table (see header comment).
 const FrameTlmProcessor::RowWriter FrameTlmProcessor::kRowWriters[FrameTlmProcessor::MAX_ROWS] = {

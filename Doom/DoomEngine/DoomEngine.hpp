@@ -128,7 +128,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 platformGetTicksMs();
 
     //! Called from DG_GetKey to drain the next queued key event. Returns
-    //! true if an event was returned, false otherwise. Non-blocking.
+    //! true if an event was returned, false if the queue is empty or a
+    //! tic barrier was consumed. Non-blocking.
     bool platformGetKey(bool& pressed, U8& code);
 
     //! Called from DG_SetWindowTitle. The deployment has no real window
@@ -176,8 +177,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! true on success, false if the queue was full.
     bool enqueueKey(bool pressed, U8 code);
 
-    //! Enqueue a down+up pair atomically: both events are queued or
-    //! neither is, so an overflow cannot leave a key stuck down.
+    //! Enqueue down, tic barrier, up atomically: all three entries are
+    //! queued or none is, so an overflow cannot leave a key stuck down.
     bool enqueueKeyTap(U8 code);
 
     //! Shared enqueue core: queues all entries or none, updating the
@@ -195,6 +196,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     static constexpr U16 packKeyEntry(bool pressed, U8 code) {
         return static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
     }
+
+    //! Queue marker that ends the current tic's DG_GetKey drain, so the
+    //! entries after it are only seen by the engine on the next tic.
+    static constexpr U16 KEY_ENTRY_TIC_BARRIER = static_cast<U16>(1U << 9);
 
     //! Send one full frame out the frameOut port (after the palette on
     //! paletteOut). src holds FRAME_BYTES of 8-bit palette indices; it

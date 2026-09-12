@@ -17,7 +17,8 @@
 sync command Start \
   opcode 0
 
-@ Press and release a named DOOM key in a single tick. Useful for menu
+@ Press a named DOOM key on one engine tic and release it on the next,
+@ so gameplay keys (FIRE, USE, WEAPONn) register. Useful for menu
 @ navigation, weapon select, and one-shot inputs from command sequences.
 sync command KeyTap(
                      key: Doom.DoomKey

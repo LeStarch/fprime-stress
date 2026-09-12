@@ -73,25 +73,29 @@ void DoomEngineTester::testCommandsEnqueueKeys() {
     this->sendCmd_KeyUp(TEST_INSTANCE_ID, cmdSeq + 2, Doom::DoomKey::UP);
     this->sendCmd_RawKey(TEST_INSTANCE_ID, cmdSeq + 3, true, static_cast<U8>(0x42));
 
-    // KeyTap -> (true, FIRE), (false, FIRE)
+    // KeyTap -> (true, FIRE), <tic barrier>, (false, FIRE)
     // KeyDown -> (true, UP)
     // KeyUp -> (false, UP)
     // RawKey -> (true, 0x42)
+    // One drain (= one engine tic) stops at the barrier: only the press
+    // is visible; the release and everything behind it land next tic.
     bool pressed[8] = {false};
     U8 code[8] = {0};
-    const FwSizeType drained = this->drainKeys(pressed, code, 8);
-    ASSERT_EQ(drained, 5u);
-
+    FwSizeType drained = this->drainKeys(pressed, code, 8);
+    ASSERT_EQ(drained, 1u);
     ASSERT_TRUE(pressed[0]);
     ASSERT_EQ(code[0], static_cast<U8>(Doom::DoomKey::FIRE));
-    ASSERT_FALSE(pressed[1]);
-    ASSERT_EQ(code[1], static_cast<U8>(Doom::DoomKey::FIRE));
-    ASSERT_TRUE(pressed[2]);
+
+    drained = this->drainKeys(pressed, code, 8);
+    ASSERT_EQ(drained, 4u);
+    ASSERT_FALSE(pressed[0]);
+    ASSERT_EQ(code[0], static_cast<U8>(Doom::DoomKey::FIRE));
+    ASSERT_TRUE(pressed[1]);
+    ASSERT_EQ(code[1], static_cast<U8>(Doom::DoomKey::UP));
+    ASSERT_FALSE(pressed[2]);
     ASSERT_EQ(code[2], static_cast<U8>(Doom::DoomKey::UP));
-    ASSERT_FALSE(pressed[3]);
-    ASSERT_EQ(code[3], static_cast<U8>(Doom::DoomKey::UP));
-    ASSERT_TRUE(pressed[4]);
-    ASSERT_EQ(code[4], 0x42);
+    ASSERT_TRUE(pressed[3]);
+    ASSERT_EQ(code[3], 0x42);
 
     ASSERT_CMD_RESPONSE_SIZE(4);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_KEYTAP, cmdSeq, Fw::CmdResponse::OK);
@@ -113,19 +117,21 @@ void DoomEngineTester::testParallelPortsEnqueueKeys() {
 
     bool pressed[8] = {false};
     U8 code[8] = {0};
-    const FwSizeType drained = this->drainKeys(pressed, code, 8);
-    ASSERT_EQ(drained, 5u);
-
+    FwSizeType drained = this->drainKeys(pressed, code, 8);
+    ASSERT_EQ(drained, 1u);
     ASSERT_TRUE(pressed[0]);
     ASSERT_EQ(code[0], static_cast<U8>(Doom::DoomKey::USE));
-    ASSERT_FALSE(pressed[1]);
-    ASSERT_EQ(code[1], static_cast<U8>(Doom::DoomKey::USE));
-    ASSERT_TRUE(pressed[2]);
+
+    drained = this->drainKeys(pressed, code, 8);
+    ASSERT_EQ(drained, 4u);
+    ASSERT_FALSE(pressed[0]);
+    ASSERT_EQ(code[0], static_cast<U8>(Doom::DoomKey::USE));
+    ASSERT_TRUE(pressed[1]);
+    ASSERT_EQ(code[1], static_cast<U8>(Doom::DoomKey::SHIFT));
+    ASSERT_FALSE(pressed[2]);
     ASSERT_EQ(code[2], static_cast<U8>(Doom::DoomKey::SHIFT));
     ASSERT_FALSE(pressed[3]);
-    ASSERT_EQ(code[3], static_cast<U8>(Doom::DoomKey::SHIFT));
-    ASSERT_FALSE(pressed[4]);
-    ASSERT_EQ(code[4], 0x7F);
+    ASSERT_EQ(code[3], 0x7F);
 
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(0);
 }
@@ -413,15 +419,16 @@ void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
 }
 
 void DoomEngineTester::testKeyTapAllOrNothing() {
-    // Fill the queue to capacity-1: a tap needs 2 slots, so it must
-    // enqueue neither event and count both as dropped.
+    // Fill the queue to capacity-2: a tap needs 3 slots (down, tic
+    // barrier, up), so it must enqueue nothing and count both key
+    // events as dropped.
     const FwSizeType cap = DoomEngine::KEY_QUEUE_CAPACITY;
-    for (FwSizeType i = 0; i + 1 < cap; ++i) {
+    for (FwSizeType i = 0; i + 2 < cap; ++i) {
         this->invoke_to_rawKeyIn(0, true, static_cast<U8>(i & 0xFFu));
     }
     Doom::DoomKey use_key(Doom::DoomKey::USE);
     this->invoke_to_keyTapIn(0, use_key);
-    ASSERT_EQ(this->component.m_keyQueueCount, cap - 1);
+    ASSERT_EQ(this->component.m_keyQueueCount, cap - 2);
     ASSERT_EQ(this->component.m_keysDropped, 2U);
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(1);
 
