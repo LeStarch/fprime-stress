@@ -3,13 +3,13 @@
 
 This deployment is distributed as a combined work under the terms of
 the GNU General Public License, version 2 (GPLv2), because it links
-statically against the vendored doomgeneric DOOM engine source which
-is itself GPLv2-licensed.
+statically against the doomgeneric DOOM engine source (pulled in as the
+git submodule Doom/DoomEngine/doomgeneric) which is itself GPLv2-licensed.
 
 The verbatim text of the GNU General Public License version 2 is
 preserved at:
 
-    Doom/doomgeneric/COPYING
+    Doom/DoomEngine/doomgeneric/LICENSE
 
 When you redistribute this deployment as source or as a compiled
 binary you MUST comply with that license, including (but not limited
@@ -28,7 +28,7 @@ by this project; see the upstream F Prime checkout for its LICENSE
 file.
 
 The "new" source files in this repository — the F Prime Doom
-component, topology, GDS plugin, scripts, and documentation — were
+components, subtopology, yamcs-plugin, scripts, and documentation — were
 authored for this deployment and are released under GPLv2 to match
 the linked work. If you wish to reuse any of those new files in a
 non-GPL context, please contact the maintainers; they are simple

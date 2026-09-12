@@ -7,7 +7,7 @@
 #include "Doom/DoomConfig/FppConstantsAc.hpp"
 
 extern "C" {
-#include "Doom/DoomEngine/doomgeneric/doomgeneric.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/doomgeneric.h"
 }
 
 namespace Doom {
@@ -421,7 +421,7 @@ void DoomEngineTester::testKeyTapAllOrNothing() {
 
 void DoomEngineTester::testStartRejectsMissingWad() {
     // A missing WAD must reject the Start (EXECUTION_ERROR + FAILED)
-    // instead of letting the vendored I_Error exit the process.
+    // instead of letting the upstream I_Error exit the process.
     this->component.setWadPath("/nonexistent/doom1.wad");
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
@@ -465,7 +465,7 @@ void DoomEngineTester::testStartCommandRejectsWhenRunning() {
 
 void DoomEngineTester::testStartRejectsUnconfiguredWad() {
     // No WAD path configured: Start must reject rather than let the
-    // vendored auto-search reach I_Error/exit.
+    // upstream auto-search reach I_Error/exit.
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
@@ -478,7 +478,7 @@ void DoomEngineTester::testStartRejectsUnconfiguredWad() {
 void DoomEngineTester::testForceStartResumesAfterStop() {
     // A Start after a Stop must resume the existing engine: no second
     // doomgeneric_Create, elapsed-time accumulators preserved (the
-    // vendored timer's cached basetime must never see the clock step
+    // upstream timer's cached basetime must never see the clock step
     // backwards), melt/draw pacing state discarded.
     this->component.m_engineCreated = true;
     this->component.m_realElapsedUsec = 5000000U;

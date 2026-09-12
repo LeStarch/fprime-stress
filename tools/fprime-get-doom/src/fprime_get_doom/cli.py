@@ -38,7 +38,6 @@ import argparse
 import hashlib
 import os
 import platform as platform_module
-import shutil
 import sys
 import tempfile
 import urllib.error
@@ -68,7 +67,6 @@ DEFAULT_MIRRORS: List[str] = [
     "https://raw.githubusercontent.com/Akbar30Bill/DOOM_wads/master/doom1.wad",
     "https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad",
     "https://archive.org/download/DoomsharewareEpisode/doom1.wad",
-    "https://www.doomworld.com/3ddownloads/ports/shareware_doom_iwad.zip",
 ]
 
 # Default output path matches the F Prime build-artifacts layout. When
@@ -144,14 +142,22 @@ def _sha256_of(path: Path, chunk: int = 1 << 16) -> str:
 
 
 def _download(url: str, dest: Path, *, timeout: float = 30.0) -> None:
-    """Stream ``url`` to ``dest``. Raises urllib.error.URLError on failure."""
+    """Stream ``url`` to ``dest``, reading at most one byte past the
+    expected size so a misbehaving mirror cannot fill the disk.
+    Raises urllib.error.URLError on failure."""
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "fprime-get-doom/0.1"},
     )
+    remaining = EXPECTED_SIZE_BYTES + 1
     with urllib.request.urlopen(request, timeout=timeout) as response:
         with open(dest, "wb") as out:
-            shutil.copyfileobj(response, out, length=1 << 16)
+            while remaining > 0:
+                block = response.read(min(1 << 16, remaining))
+                if not block:
+                    break
+                out.write(block)
+                remaining -= len(block)
 
 
 def fetch(

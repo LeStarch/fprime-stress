@@ -40,7 +40,7 @@ Space / Ctrl. The panel offers three controls:
 - `fprime-yamcs --yamcs-web-extension-dirs` injects
   `doom-display/doom-display.js` as a module script into the yamcs-web
   index page (via the yamcs-web `addExtension` API).
-- The script resolves the `FrameNN` / `Palette` packet containers,
+- The script resolves the `FrameRowNNN` / `PaletteOut` packet containers,
   the `KeyDown`/`KeyUp`/`Start`/`Stop`/`Reset` commands, and the
   `State` telemetry parameter from the YAMCS MDB at runtime, so it
   works with any deployment embedding the Doom subtopology regardless
@@ -49,7 +49,7 @@ Space / Ctrl. The panel offers three controls:
 - Frames arrive through a WebSocket subscription to the raw
   `tm_realtime` packet stream and are decoded from the binary
   packetized-telemetry (Svc.TlmPacketizer, APID 4) wire format; a
-  parameter subscription would inflate the 8.6 MB/s binary stream
+  parameter subscription would inflate the multi-MB/s binary stream
   roughly tenfold as protobuf-JSON.
 - Deployments downlinking via Svc.TlmChan (per-channel packets,
   APID 1) are not supported; use packetized telemetry as configured in

@@ -1,12 +1,13 @@
 # ======================================================================
 # Doom subtopology
 #
-# Wraps the Doom component plus a dedicated BufferManager so that any
-# deployment can drop the whole game-engine subsystem in by adding a
-# single `instance DoomSubtopology.Subtopology` to its topology.
+# Wraps the DoomEngine, FrameDownsampler and FrameTlmProcessor
+# components plus a dedicated BufferManager so that any deployment can
+# drop the whole game-engine subsystem in by adding a single
+# `instance DoomSubtopology.Subtopology` to its topology.
 #
 # Deployments are expected to wire:
-#   * Subtopology.schedIn   <- a RateGroup member out port (~30 Hz)
+#   * Subtopology.schedIn   <- a RateGroup member out port (35 Hz)
 #   * The standard F Prime command / event / telemetry / time
 #     interfaces are imported by the doom instance via Fw.Command /
 #     Fw.Event / Fw.Channel / time get port; the enclosing topology's

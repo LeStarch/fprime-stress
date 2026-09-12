@@ -1,8 +1,9 @@
 # doomgeneric (third-party)
 
-This deployment vendors the upstream **doomgeneric** project from
-[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) at commit
-`dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under `Doom/doomgeneric/`. doomgeneric in turn is a port of the
+This library consumes the upstream **doomgeneric** project from
+[ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) as the git
+submodule `Doom/DoomEngine/doomgeneric/`, pinned at commit
+`dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284`. doomgeneric in turn is a port of the
 [Chocolate Doom](https://github.com/chocolate-doom/chocolate-doom)
 engine, which is itself derived from the original id Software DOOM
 source release.
@@ -13,36 +14,21 @@ doomgeneric is licensed under the **GNU General Public License,
 version 2** (GPLv2). The verbatim license text is preserved at:
 
 ```
-Doom/doomgeneric/COPYING
+Doom/DoomEngine/doomgeneric/LICENSE
 ```
 
-Per the requirements of GPLv2 we redistribute that license file
+Per the requirements of GPLv2 the submodule carries that license file
 unaltered alongside the source.
 
 ## Source preservation
 
-No file under `Doom/doomgeneric/` has been modified by this project.
-The complete vendored source tree is identical to the upstream
-release with the following platform-specific files **removed** (they
-are not built and never replaced by an in-place modification):
-
-```
-doomgeneric_allegro.c
-doomgeneric_emscripten.c
-doomgeneric_linuxvt.c
-doomgeneric_sdl.c
-doomgeneric_soso.c
-doomgeneric_sosox.c
-doomgeneric_win.c
-doomgeneric_xlib.c
-i_allegromusic.c
-i_allegrosound.c
-i_sdlmusic.c
-i_sdlsound.c
-```
-
-The required `DG_*` platform glue functions are implemented in
-`Doom/DoomEngine.cpp` outside the vendored tree.
+No file in the submodule is modified by this project; the gitlink pins
+the exact upstream commit. Only the portable engine sources listed in
+`Doom/DoomEngine/CMakeLists.txt` are compiled. The upstream
+platform-specific back ends (`doomgeneric_*.c`, `i_sdl*.c`,
+`i_allegro*.c`) and Makefiles are present in the checkout but never
+built; the required `DG_*` platform glue functions are implemented in
+`Doom/DoomEngine/DoomEngine.cpp` outside the submodule.
 
 ## Combined work licensing
 
@@ -58,6 +44,6 @@ unchanged.
 
 ## Where the rules of the road live
 
-- doomgeneric source / GPLv2 license: `Doom/doomgeneric/`
+- doomgeneric source / GPLv2 license: `Doom/DoomEngine/doomgeneric/`
 - F Prime license (Apache-2.0): see the linked F Prime checkout
 - This project's own (new) source: see top-level `LICENSE`

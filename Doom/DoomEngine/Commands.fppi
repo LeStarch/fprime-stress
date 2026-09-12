@@ -63,7 +63,7 @@ sync command Stop \
 @ rate-group thread on its next tick: the pending key queue is
 @ flushed, any in-flight screen-wipe playback is discarded, and the
 @ engine returns to the title sequence via its own start-title
-@ machinery. The engine itself is not torn down (the vendored engine
+@ machinery. The engine itself is not torn down (the upstream engine
 @ has no clean shutdown path). A Reset while the engine is created
 @ but stopped responds OK and latches the request; it is applied on
 @ the first tick after the next Start. Responds EXECUTION_ERROR if

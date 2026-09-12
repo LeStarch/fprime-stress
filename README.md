@@ -62,11 +62,11 @@ flowchart LR
         CS[KeyDown / KeyUp /<br/>KeyTap / RawKey]
     end
     subgraph Telem[Telemetry path]
-        TC[TlmChan]
-        CCSDS[ComCcsds<br/>SpacePacketFramer]
-        NET[Drv.TcpClient]
+        TC[TlmPacketizer]
+        CCSDS[ComCcsds<br/>SpacePacket + TM framing]
+        NET[Drv.Udp]
     end
-    subgraph GDS[fprime-gds<br/>+ JS doom-display plugin]
+    subgraph GDS[YAMCS<br/>+ doom-display web extension]
         CANVAS[Canvas viewer]
         KBD[Browser keydown/keyup]
     end
@@ -83,14 +83,14 @@ flowchart LR
     TP -- PaletteOut --> TC
     DE -- FrameRateHz<br/>FrameDataRateBps<br/>InputCommandRateHz<br/>InputDataRateBps --> TC
     TC --> CCSDS --> NET --> GDS
-    KBD -- HTTP --> CS
+    KBD -- TC frames --> CS
     GDS --> CANVAS
     DE -.uses.-> BM
 ```
 
 DOOM's frame buffer (640 × 400 palette-indexed pixels = **256 kB per
 frame**) is too large to ship as a single FPP telemetry sample
-under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (4 kB by default).
+under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (512 B by default).
 The engine sends the complete frame out a synchronous `Doom.RawFrame`
 port as an `Fw::Buffer`; a passive `FrameDownsampler` decimates it in
 place by a compile-time power-of-two factor (`Doom.DOWNSAMPLE_FACTOR`
@@ -106,7 +106,7 @@ downsampler strides over the engine-owned buffer and packs retained
 pixels toward its front, forwarding the same data pointer.
 
 A load-bearing observation from running this at full rate: `TlmChan`
-is a slot-store — it retains only the most recent value per channel
+(and `TlmPacketizer`) is a slot-store — it retains only the most recent value per channel
 id between Run ticks. An implementation writing every row to a single
 channel id would see only the bottom-of-frame row survive to ground
 each Run tick and the browser canvas would only paint the HUD strip.
@@ -144,15 +144,17 @@ the system is meant to be exercised in flight*. This one does:
    that overruns — exactly the telemetry a mission operator would
    inspect when the spacecraft is overloaded.
 
-2. **Sustained bulk downlink**. Each rate-group tick produces 80
-   serialized FPP messages of ~3.2 kB plus a palette and four rate
-   channels. That is **~9 MB/s** flowing through `TlmChan` →
-   `ComCcsds` → `Drv.TcpClient`. The CCSDS framer's
+2. **Sustained bulk downlink**. Each rate-group tick produces one
+   `FrameRow` message per downsampled scanline (200 messages of
+   ~330 B at the default X2) plus the palette and rate channels. That
+   is **~2.4 MB/s** flowing through `TlmPacketizer` → `ComCcsds` →
+   `Drv.Udp`, rising to ~9 MB/s at X1. The CCSDS framer's
    `TmFrameFixedSize` is dimensioned to swallow it. Saturating the
    downlink under load is the whole point.
 
-3. **Asynchronous uplink**. The JS GDS plugin captures browser
-   keystrokes and POSTs them to the command dispatcher, which fans
+3. **Asynchronous uplink**. The doom-display web extension captures
+   browser keystrokes and issues them as YAMCS commands to the
+   command dispatcher, which fans
    into both the regular F Prime command handlers and the parallel
    `sync input ports` (`keyTapIn` / `keyDownIn` / `keyUpIn` /
    `rawKeyIn`) — a deliberate fan-in surface so that a future
@@ -178,8 +180,8 @@ the system is meant to be exercised in flight*. This one does:
    | `InputCommandRateHz` | F32 | Key events delivered per second |
    | `InputDataRateBps` | U32 | Uplink B/s arriving as key events |
 
-   These are graphable in the GDS Channels tab and trip nicely past
-   8 MB/s during gameplay. Cycle slips — when DOOM's tick exceeds the
+   These are graphable in YAMCS and trip nicely past 2 MB/s during
+   gameplay at the default X2. Cycle slips — when DOOM's tick exceeds the
    rate-group budget — show up directly on `rateGroup1Comp`'s
    `RgCycleSlips` channel and `RateGroupCycleSlip` event, so an
    overload is observable in the telemetry stream itself.
@@ -198,7 +200,7 @@ fprime-get-doom    # auto-discovers build-artifacts/, drops doom1.wad in data/
 
 # 4) Launch from inside the deployment bin/ dir so -w defaults work
 cd build-artifacts/Linux/FprimeStressReference_ReferenceDeployment/bin
-./FprimeStressReference_ReferenceDeployment -a 127.0.0.1 -p 50100 -S
+./FprimeStressReference_ReferenceDeployment -a 127.0.0.1 -p 50000 -S
 
 # 5) (optional) watch in a browser via the YAMCS ground layer
 cd ../../../..    # back to project root from build-artifacts/<plat>/<dep>/bin/
@@ -218,7 +220,7 @@ invocation of either works after `fprime-util build` has run.
 Doom/                           shared FPP types + components
   Doom.fpp                      constants, structs, enums, ports
   DoomEngine/                   DoomEngine component
-    doomgeneric/                vendored upstream DOOM source (GPLv2)
+    doomgeneric/                ozkl/doomgeneric git submodule (GPLv2)
     test/ut/                    googletest unit tests
   FrameDownsampler/             in-place frame decimation component
   FrameTlmProcessor/            per-row telemetry emission component
@@ -253,7 +255,7 @@ trips `RateGroupCycleSlip` immediately rather than silently being
 absorbed by a queue — which is the discipline you want from a
 flight-software rate group.
 
-The vendored engine builds with `-w -O2` regardless of the project
+The upstream engine builds with `-w -O2` regardless of the project
 build type (flags only — the source is untouched): DOOM's level load
 runs inside a single game tic, and unoptimized builds can exceed the
 28.57 ms rate-group budget at demo level transitions.
@@ -273,7 +275,7 @@ frame per cycle, so the melt animates on the downlink at its native
 pace. Frames that overflow the buffer are dropped and counted in the
 `FramesDropped` channel.
 
-Known limitation (inherited): the vendored engine's `I_GetTime`
+Known limitation (inherited): the upstream engine's `I_GetTime`
 computes `ms * TICRATE / 1000` in 32-bit arithmetic, so its internal
 clock wraps after roughly 34 hours of continuous running. This is
 upstream engine arithmetic we deliberately do not modify; a Stop/Start
@@ -281,9 +283,9 @@ cycle is not affected (the wrapper clock never steps backwards).
 
 ## Licensing
 
-* Upstream doomgeneric is vendored under `Doom/doomgeneric/` verbatim
-  and is GPLv2 (`Doom/doomgeneric/COPYING`).
-* The new F Prime glue (DoomEngine, DoomSubtopology, GDS plugin) is
+* Upstream doomgeneric is pulled in unmodified as the git submodule
+  `Doom/DoomEngine/doomgeneric/` and is GPLv2 (`LICENSE` in that tree).
+* The new F Prime glue (DoomEngine, DoomSubtopology, yamcs-plugin) is
   GPLv2 because the final linked binary inherits GPLv2.
 * The `fprime-get-doom` helper is Apache-2.0 (no DOOM code links into
   the helper).

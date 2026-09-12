@@ -9,7 +9,7 @@ module Doom {
 
   # ----------------------------------------------------------------------
   # Fixed engine geometry. Must match the DOOMGENERIC_RESX/RESY compile
-  # definitions on the vendored engine; do not change independently.
+  # definitions on the upstream engine; do not change independently.
   # ----------------------------------------------------------------------
 
   @ Width of the full-resolution DOOM frame in pixels.

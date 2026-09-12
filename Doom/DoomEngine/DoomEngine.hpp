@@ -215,7 +215,7 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! mutating engine state (see the rendezvous in forceStart).
     std::atomic<bool> m_tickInProgress;
 
-    //! True once doomgeneric_Create has run. The vendored engine's
+    //! True once doomgeneric_Create has run. The upstream engine's
     //! initialisation is one-shot, so Create is never invoked twice.
     bool m_engineCreated;
 
