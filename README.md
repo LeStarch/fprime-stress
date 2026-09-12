@@ -218,7 +218,7 @@ invocation of either works after `fprime-util build` has run.
 Doom/                           shared FPP types + components
   Doom.fpp                      constants, structs, enums, ports
   DoomEngine/                   DoomEngine component
-    doomgeneric/                vendored upstream DOOM source (GPLv2)
+    doomgeneric/                ozkl/doomgeneric git submodule (GPLv2)
     test/ut/                    googletest unit tests
   FrameDownsampler/             in-place frame decimation component
   FrameTlmProcessor/            per-row telemetry emission component
@@ -253,7 +253,7 @@ trips `RateGroupCycleSlip` immediately rather than silently being
 absorbed by a queue — which is the discipline you want from a
 flight-software rate group.
 
-The vendored engine builds with `-w -O2` regardless of the project
+The upstream engine builds with `-w -O2` regardless of the project
 build type (flags only — the source is untouched): DOOM's level load
 runs inside a single game tic, and unoptimized builds can exceed the
 28.57 ms rate-group budget at demo level transitions.
@@ -273,7 +273,7 @@ frame per cycle, so the melt animates on the downlink at its native
 pace. Frames that overflow the buffer are dropped and counted in the
 `FramesDropped` channel.
 
-Known limitation (inherited): the vendored engine's `I_GetTime`
+Known limitation (inherited): the upstream engine's `I_GetTime`
 computes `ms * TICRATE / 1000` in 32-bit arithmetic, so its internal
 clock wraps after roughly 34 hours of continuous running. This is
 upstream engine arithmetic we deliberately do not modify; a Stop/Start
@@ -281,8 +281,8 @@ cycle is not affected (the wrapper clock never steps backwards).
 
 ## Licensing
 
-* Upstream doomgeneric is vendored under `Doom/doomgeneric/` verbatim
-  and is GPLv2 (`Doom/doomgeneric/COPYING`).
+* Upstream doomgeneric is pulled in unmodified as the git submodule
+  `Doom/DoomEngine/doomgeneric/` and is GPLv2 (`LICENSE` in that tree).
 * The new F Prime glue (DoomEngine, DoomSubtopology, GDS plugin) is
   GPLv2 because the final linked binary inherits GPLv2.
 * The `fprime-get-doom` helper is Apache-2.0 (no DOOM code links into

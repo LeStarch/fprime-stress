@@ -1,8 +1,8 @@
 ####
 # DoomEngine component: wraps the open-source DOOM engine in a single
-# F Prime passive component. The upstream DOOM C source (located in
-# doomgeneric/) is vendored untouched and compiled into a static
-# library, which the component links against. The component itself
+# F Prime passive component. The upstream DOOM C source (the
+# doomgeneric/ git submodule, ozkl/doomgeneric) is compiled untouched
+# into a static library, which the component links against. The component itself
 # provides the DG_* hooks the engine expects (DG_Init, DG_DrawFrame,
 # DG_SleepMs, DG_GetTicksMs, DG_GetKey, DG_SetWindowTitle).
 ####
@@ -11,7 +11,7 @@
 # Upstream DOOM source compiled as a separate static library so we can
 # scope the relaxed warning flags it requires to that target alone.
 # ----------------------------------------------------------------------
-set(DOOMGENERIC_DIR "${CMAKE_CURRENT_LIST_DIR}/doomgeneric")
+set(DOOMGENERIC_DIR "${CMAKE_CURRENT_LIST_DIR}/doomgeneric/doomgeneric")
 set(DOOMGENERIC_SOURCES
     "${DOOMGENERIC_DIR}/am_map.c"
     "${DOOMGENERIC_DIR}/d_event.c"

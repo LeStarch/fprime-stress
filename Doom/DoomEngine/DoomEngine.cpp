@@ -29,13 +29,13 @@
 #include <cstring>
 
 extern "C" {
-#include "Doom/DoomEngine/doomgeneric/doomgeneric.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/doomgeneric.h"
 // d_loop.h exports singletics: one game tic per TryRunTics() call.
-#include "Doom/DoomEngine/doomgeneric/d_loop.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/d_loop.h"
 // d_main.h exports D_StartTitle: return to the boot title sequence.
-#include "Doom/DoomEngine/doomgeneric/d_main.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/d_main.h"
 // i_video.h declares the engine's active palette (struct color colors[256]).
-#include "Doom/DoomEngine/doomgeneric/i_video.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/i_video.h"
 }  // extern "C"
 
 namespace Doom {
@@ -299,7 +299,7 @@ bool DoomEngine::forceStart() {
         return false;
     }
     if (!m_engineCreated) {
-        // Pre-validate the WAD: the vendored engine calls exit() via
+        // Pre-validate the WAD: the upstream engine calls exit() via
         // I_Error on a missing or unfindable WAD, which would take
         // down the whole flight process. Reject the Start instead.
         // Advisory only (TOCTOU): a WAD removed after this check can
@@ -318,7 +318,7 @@ bool DoomEngine::forceStart() {
 
     // (Re)base the reference time used by DG_GetTicksMs so time spent
     // stopped is not counted. The elapsed-time accumulators are reset
-    // only on the first start: the vendored timer caches a basetime
+    // only on the first start: the upstream timer caches a basetime
     // derived from this clock, so it must never step backwards across
     // a Stop->Start cycle.
     const Os::RawTime::Status rt = m_engineStart.now();
@@ -347,10 +347,10 @@ bool DoomEngine::forceStart() {
         // must outlive the call. Both live in DoomEngine members.
         const int argc = this->buildEngineArgv(m_argvPointers,
                                                static_cast<int>(FW_NUM_ARRAY_ELEMENTS(m_argvPointers)));
-        // The vendored engine's init (Z_Init, W_AddFile, ...) is
+        // The upstream engine's init (Z_Init, W_AddFile, ...) is
         // one-shot; guard Create so a ground Stop->Start cycle resumes
         // the existing engine instead of re-initialising it.
-        // const_cast: the vendored C API takes char** but never
+        // const_cast: the upstream C API takes char** but never
         // mutates the argv strings.
         doomgeneric_Create(argc, const_cast<char**>(m_argvPointers));
         m_engineCreated = true;
