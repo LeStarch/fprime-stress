@@ -23,8 +23,8 @@
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
 
-#include "Doom/DoomEngineComponentAc.hpp"
-#include "Doom/FppConstantsAc.hpp"
+#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
 
@@ -50,19 +50,14 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Total bytes in one palette-indexed DOOM frame.
     static constexpr U32 FRAME_BYTES = static_cast<U32>(FRAME_WIDTH) * static_cast<U32>(FRAME_HEIGHT);
 
-    //! Number of rows of a frame packed into one FrameChunk sample.
-    static constexpr U16 ROWS_PER_CHUNK = 5;
-
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
-    //! Capacity (in frames) of the screen-wipe melt playback buffer.
-    //! The melt animation spans roughly 40-70 engine draws; 80 gives
-    //! margin above the observed worst case while bounding the static
-    //! footprint to 80 x 256 KB = ~20.5 MB. Overflowing frames are
-    //! dropped and counted in FramesDropped (the wipe then cuts to the
-    //! live frame early).
-    static constexpr FwSizeType MELT_QUEUE_CAPACITY = 80;
+    //! Capacity (in frames) of the screen-wipe melt playback buffer,
+    //! configured in DoomConfig.fpp. Each slot costs FRAME_BYTES of
+    //! static footprint; overflowing frames are dropped and counted in
+    //! FramesDropped (the wipe then cuts to the live frame early).
+    static constexpr FwSizeType MELT_QUEUE_CAPACITY = Doom::MELT_QUEUE_CAPACITY;
 
     //! Microseconds slept per forceStart rendezvous poll.
     static constexpr U32 RENDEZVOUS_DELAY_USEC = 1000;
@@ -97,8 +92,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     void platformInit();
 
     //! Called from DG_DrawFrame at the end of each rendered DOOM frame.
-    //! The first draw of a tick is emitted as FrameChunk telemetry plus
-    //! the active palette; subsequent draws in the same tick (a screen
+    //! The first draw of a tick is sent out the frameOut port with the
+    //! active palette; subsequent draws in the same tick (a screen
     //! wipe) are buffered into the melt ring, or dropped and counted in
     //! FramesDropped when the ring is full.
     void platformDrawFrame();
@@ -178,9 +173,9 @@ class DoomEngine final : public DoomEngineComponentBase {
         return static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
     }
 
-    //! Emit one full frame as FrameOut chunk telemetry plus the active
-    //! palette. src holds FRAME_BYTES of 8-bit palette indices;
-    //! frameNumber is stamped into every chunk of the emission.
+    //! Send one full frame out the frameOut port (after the palette on
+    //! paletteOut). src holds FRAME_BYTES of 8-bit palette indices; it
+    //! is copied into m_frameBuffer, which downstream may mutate.
     void emitFrame(const U8* src, U32 frameNumber);
 
     //! Capture the active DOOM palette out of the engine's color table.
@@ -193,21 +188,6 @@ class DoomEngine final : public DoomEngineComponentBase {
     int buildEngineArgv(const char** argv, int maxArgv);
 
   private:
-    // ------------------------------------------------------------------
-    // FrameOutNN dispatch table.
-    //
-    // Each FrameChunk position has its own telemetry channel id
-    // (FrameOut00 .. FrameOut79). The dispatch table maps the chunk
-    // index to the matching tlmWrite_FrameOutNN member-function pointer.
-    // Lives inside the class because the base-class tlmWrite_FrameOutNN
-    // methods are protected; only the derived class can take their
-    // address.
-    // ------------------------------------------------------------------
-
-    using FrameOutWriter = void (DoomEngineComponentBase::*)(
-        const Doom::FrameChunk&, Fw::Time) const;
-    static const FrameOutWriter kFrameOutWriters[Doom::CHUNKS_PER_FRAME];
-
     // ------------------------------------------------------------------
     // Engine-thread state (rate-group thread only).
     // ------------------------------------------------------------------
@@ -288,9 +268,12 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Scheduler ticks inside the current rate window.
     U32 m_schedTicks;
+    //! Microseconds accumulated inside the current rate window from
+    //! the schedIn context (variable-rate mode only).
+    U32 m_windowElapsedUsec;
     //! Frames produced inside the current rate window.
     U32 m_framesThisWindow;
-    //! Bytes of FrameOut + PaletteOut emitted inside the current window.
+    //! Bytes of frameOut + paletteOut emitted inside the current window.
     U32 m_frameBytesThisWindow;
 
     // ------------------------------------------------------------------
@@ -302,6 +285,16 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Virtual milliseconds accumulated by platformSleepMs; added to
     //! the real elapsed time reported by platformGetTicksMs.
     U32 m_virtualSleepMs;
+
+    //! True once a nonzero schedIn context (microseconds per tick) has
+    //! been seen: the engine clock then advances by tick time instead
+    //! of the OS clock, tracking a variable-rate group exactly.
+    bool m_useTickTime;
+
+    //! Microseconds of tick time accumulated from the schedIn context.
+    //! Seeded from m_realElapsedUsec at mode switch so the clock never
+    //! steps backwards.
+    U64 m_tickElapsedUsec;
 
     //! Real microseconds elapsed since Start, accumulated in 64 bits
     //! with m_engineStart rebased on every read so getDiffUsec's U32
@@ -324,6 +317,11 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Frames dropped because the melt buffer was full.
     U32 m_framesDropped;
+
+    //! Engine-owned copy of the frame sent out frameOut. Downstream
+    //! (the downsampler) mutates it in place during the port call, so
+    //! the live DG_ScreenBuffer cannot be sent directly.
+    U8 m_frameBuffer[FRAME_BYTES];
 
     // ------------------------------------------------------------------
     // Configuration

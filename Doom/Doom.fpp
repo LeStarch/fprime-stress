@@ -1,56 +1,28 @@
 module Doom {
 
   # ----------------------------------------------------------------------
-  # Frame dimensions
-  #
-  # The wrapped DOOM engine runs at a fixed 640 x 400 palette-indexed
-  # resolution. Frames are streamed down as a sequence of FrameChunk
-  # telemetry samples, each carrying a contiguous run of complete rows.
-  # At DOOM's native 35 Hz this is 80 chunks * 3200 B * 35 Hz ~ 8.6 MB/s
-  # of sustained downlink telemetry - a deliberately punishing stress
-  # workload.
-  # ----------------------------------------------------------------------
-
-  @ Width of the DOOM frame in pixels.
-  constant FRAME_WIDTH = 640
-
-  @ Height of the DOOM frame in scanlines.
-  constant FRAME_HEIGHT = 400
-
-  @ Number of rows packed into a single FrameChunk telemetry sample.
-  @ FRAME_WIDTH * ROWS_PER_CHUNK + FrameChunk header must fit inside
-  @ FW_COM_BUFFER_MAX_SIZE (4096 in this project). 5 * 640 = 3200 B.
-  constant ROWS_PER_CHUNK = 5
-
-  @ Number of palette-indexed pixel bytes per FrameChunk.
-  constant FRAME_CHUNK_BYTES = 3200
-
-  @ Number of FrameChunk samples emitted to downlink one complete frame.
-  @ FRAME_HEIGHT (400) / ROWS_PER_CHUNK (5) = 80.
-  constant CHUNKS_PER_FRAME = 80
-
-  @ Number of palette bytes (256 entries * 3 bytes per RGB triple).
-  constant PALETTE_BYTES = 768
-
-  # ----------------------------------------------------------------------
   # Telemetry struct types
+  #
+  # The wrapped DOOM engine runs at a fixed FRAME_WIDTH x FRAME_HEIGHT
+  # palette-indexed resolution (constants in DoomConfig.fpp). The
+  # engine hands each full frame to a downsampler over a synchronous
+  # RawFrame port; the downsampler decimates it in place by the
+  # compile-time DOWNSAMPLE_FACTOR and forwards it to a telemetry
+  # processor that emits one FrameRow channel per downsampled scanline.
   # ----------------------------------------------------------------------
 
-  @ A contiguous block of DOOM frame scanlines. The component emits
-  @ CHUNKS_PER_FRAME of these per displayed frame, each carrying
-  @ ROWS_PER_CHUNK rows of FRAME_WIDTH palette indices.
-  struct FrameChunk {
-    @ Monotonically increasing frame counter set by the component.
+  @ One scanline of the downsampled DOOM frame. The pixel array is
+  @ sized exactly to the configured downsampled width, so each row
+  @ carries no unused on-wire bytes.
+  struct FrameRow {
+    @ Monotonically increasing frame counter set by the engine.
     frame: U32
-    @ Index of the first scanline contained in this chunk (0..FRAME_HEIGHT-1).
+    @ Scanline index within the downsampled frame (0..height-1).
     row: U16
-    @ Number of scanlines packed in this chunk.
-    rowCount: U16
-    @ Width in pixels of each row in this chunk.
+    @ Width in pixels of this row (= Doom.DOWNSAMPLED_WIDTH).
     width: U16
-    @ Palette-indexed pixel data, laid out row-major. Only the first
-    @ rowCount * width bytes are valid; trailing bytes are zero.
-    pixels: [Doom.FRAME_CHUNK_BYTES] U8
+    @ Palette-indexed pixel data for this scanline.
+    pixels: [Doom.DOWNSAMPLED_WIDTH] U8
   }
 
   @ The active DOOM palette as a flat RGB byte array. Emitted with
@@ -131,95 +103,19 @@ module Doom {
                     code: U8
                   )
 
-  # ----------------------------------------------------------------------
-  # Component
-  # ----------------------------------------------------------------------
+  @ Synchronous frame hand-off. `pixels` wraps caller-owned storage of
+  @ width * height palette indices, valid (and mutable by the callee)
+  @ only for the duration of the port call. No ownership transfer.
+  port RawFrame(
+                 frameNumber: U32
+                 width: U16
+                 height: U16
+                 ref pixels: Fw.Buffer
+               )
 
-  @ Single component wrapping the open-source DOOM engine. Frames are
-  @ pushed down as FrameChunk telemetry; ground inputs arrive as
-  @ KeyTap/KeyDown/KeyUp/RawKey commands and are converted into queue
-  @ entries the engine consumes through its DG_GetKey hook.
-  @
-  @ Engine pacing is driven entirely from the schedIn port: each call
-  @ runs exactly one doomgeneric_Tick (one DOOM frame of game logic)
-  @ or replays one buffered screen-wipe melt frame on the rate-group
-  @ thread. doomgeneric_Create is invoked synchronously by the first
-  @ Start after rendezvousing with any in-flight tick; a Start after a
-  @ Stop resumes the existing engine.
-  @
-  @ Declared passive: schedIn is sync (runs on the rate-group thread)
-  @ and all command handlers are sync (run on the cmdDispatch thread),
-  @ so the component owns no thread of its own. Cross-thread state is
-  @ limited to the mutex-guarded key queue and the std::atomic
-  @ members (start/stop, tick-in-progress, last-published-state,
-  @ reset-requested).
-  passive component DoomEngine {
-
-    # ------------------------------------------------------------------
-    # Scheduled ports
-    # ------------------------------------------------------------------
-
-    @ Periodic scheduled call driving one doomgeneric_Tick per pulse
-    @ (or one buffered melt-frame replay while a screen wipe drains).
-    @ Declared sync so a tick that overruns its rate-group budget
-    @ trips Svc.ActiveRateGroup's cycle-slip telemetry directly,
-    @ giving hard evidence of an over-budget engine instead of
-    @ silently dropping the late frame.
-    sync input port schedIn: Svc.Sched
-
-    # ------------------------------------------------------------------
-    # Parallel input ports
-    #
-    # Mirror the key-input commands so any in-topology source (sensor
-    # adapter, macro, etc.) can drive inputs without bouncing through
-    # the command dispatcher.
-    # ------------------------------------------------------------------
-
-    @ Tap (press + release) a named key.
-    sync input port keyTapIn: Doom.KeyEvent
-
-    @ Press and hold a named key.
-    sync input port keyDownIn: Doom.KeyEvent
-
-    @ Release a previously held named key.
-    sync input port keyUpIn: Doom.KeyEvent
-
-    @ Raw press-or-release with an arbitrary key code.
-    sync input port rawKeyIn: Doom.RawKeyEvent
-
-    # ------------------------------------------------------------------
-    # Standard component interfaces
-    # ------------------------------------------------------------------
-
-    @ Time get port used to tag telemetry samples and events.
-    time get port timeCaller
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
-
-    include "Commands.fppi"
-
-    # ------------------------------------------------------------------
-    # Telemetry
-    # ------------------------------------------------------------------
-
-    include "Telemetry.fppi"
-
-    # ------------------------------------------------------------------
-    # Events
-    # ------------------------------------------------------------------
-
-    include "Events.fppi"
-
-    # ------------------------------------------------------------------
-    # Standard interfaces pulled from the framework
-    # ------------------------------------------------------------------
-
-    import Fw.Event
-    import Fw.Command
-    import Fw.Channel
-
-  }
+  @ Synchronous palette hand-off, sent whenever a frame is sent.
+  port PaletteSend(
+                    palette: Doom.Palette
+                  )
 
 }

@@ -25,6 +25,13 @@ module DoomSubtopology {
     @ handlers run on the command-dispatch thread.
     instance doom: Doom.DoomEngine base id DoomSubtopologyConfig.BASE_ID + 0x00000
 
+    @ In-place frame decimator between the engine and telemetry
+    @ processing. Passive: runs on the engine's rate-group thread.
+    instance frameDownsampler: Doom.FrameDownsampler base id DoomSubtopologyConfig.BASE_ID + 0x02000
+
+    @ Emits the downsampled frame as per-row telemetry. Passive.
+    instance frameTlmProcessor: Doom.FrameTlmProcessor base id DoomSubtopologyConfig.BASE_ID + 0x03000
+
     @ Dedicated BufferManager for the Doom subtopology. Reserved for
     @ truly unpredictable dynamic allocations originating from within
     @ this subsystem; init-time predictable allocations should continue
@@ -63,6 +70,19 @@ module DoomSubtopology {
     topology Subtopology {
         instance doom
         instance doomBufferManager
+        instance frameDownsampler
+        instance frameTlmProcessor
+
+        # --------------------------------------------------------------
+        # Synchronous frame pipeline: engine -> downsampler -> telemetry.
+        # --------------------------------------------------------------
+
+        connections FramePipeline {
+            doom.frameOut -> frameDownsampler.frameIn
+            doom.paletteOut -> frameDownsampler.paletteIn
+            frameDownsampler.frameOut -> frameTlmProcessor.frameIn
+            frameDownsampler.paletteOut -> frameTlmProcessor.paletteIn
+        }
 
         # --------------------------------------------------------------
         # Exposed ports - the enclosing deployment wires these.

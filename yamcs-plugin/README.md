@@ -3,7 +3,7 @@
 A [yamcs-web](https://yamcs.org/) extension that renders the DOOM frame
 telemetry produced by `Doom::DoomEngine` directly inside the YAMCS web
 interface, and forwards keyboard input back as F Prime commands. It is
-the YAMCS counterpart of the fprime-gds addon in `../gds-plugin`.
+the project's browser display for the DOOM frame pipeline.
 
 ## Usage
 

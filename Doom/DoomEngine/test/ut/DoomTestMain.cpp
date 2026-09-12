@@ -3,7 +3,7 @@
 // \brief  GoogleTest entrypoint for the DoomEngine unit tests.
 // ======================================================================
 
-#include "Doom/test/ut/DoomEngineTester.hpp"
+#include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
 
 #include <memory>
 
@@ -131,6 +131,12 @@ TEST(OffNominal, ForceStartWhenAlreadyRunning) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
     tester->testForceStartWhenAlreadyRunning();
+}
+
+TEST(Nominal, VariableRateContextAdvancesClock) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testVariableRateContextAdvancesClock();
 }
 
 int main(int argc, char** argv) {
