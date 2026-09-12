@@ -57,7 +57,8 @@ const PALETTE_BYTES = 768;
 // closed).
 const MAX_RECORDED_COMMANDS = 10000;
 
-// Browser key -> Doom.DoomKey enum label (Doom.fpp).
+// Browser key -> Doom.DoomKey enum label (Doom.fpp). Letters are
+// lower-cased first so Shift (run) chords still resolve.
 const KEY_TO_DOOMKEY = {
     "ArrowUp": "UP", "ArrowDown": "DOWN", "ArrowLeft": "LEFT", "ArrowRight": "RIGHT",
     "w": "UP", "s": "DOWN", "a": "STRAFE_L", "d": "STRAFE_R",
@@ -66,6 +67,11 @@ const KEY_TO_DOOMKEY = {
     "1": "WEAPON1", "2": "WEAPON2", "3": "WEAPON3", "4": "WEAPON4",
     "5": "WEAPON5", "6": "WEAPON6", "7": "WEAPON7", "p": "PAUSE",
 };
+
+function lookupDoomKey(event) {
+    const k = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    return KEY_TO_DOOMKEY[k];
+}
 
 class DoomDisplay {
     constructor() {
@@ -438,7 +444,7 @@ class DoomDisplay {
     }
 
     onKeyDown(event) {
-        const key = KEY_TO_DOOMKEY[event.key];
+        const key = lookupDoomKey(event);
         if (!key) {
             return;
         }
@@ -451,7 +457,7 @@ class DoomDisplay {
     }
 
     onKeyUp(event) {
-        const key = KEY_TO_DOOMKEY[event.key];
+        const key = lookupDoomKey(event);
         if (!key) {
             return;
         }

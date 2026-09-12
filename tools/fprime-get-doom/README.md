@@ -4,8 +4,11 @@ A tiny console script that downloads, verifies, and pins the shareware
 DOOM1.WAD from a public upstream mirror. It exists because the
 [fprime-stress](../../) Doom component needs *some* WAD to load at
 startup, and id Software's shareware redistribution license is
-clearer when the WAD is fetched on demand from id's own published
-mirrors than when a binary copy is committed into a third-party repo.
+clearer when the WAD is fetched on demand from public mirrors (a
+GitHub WAD collection, the SliTaz package mirror on ibiblio, and
+archive.org — none operated by id Software; every download is
+verified against the pinned v1.9 size and SHA-256) than when a binary
+copy is committed into a third-party repo.
 
 ## Install
 
@@ -21,8 +24,13 @@ mirroring the entry-point conventions of `fprime-util` and `fprime-gds`.
 ## Use
 
 ```bash
-# writes ./doom1.wad (default)
+# writes build-artifacts/<platform>/<deployment>/data/doom1.wad when
+# exactly one platform/deployment exists under ./build-artifacts,
+# otherwise ./doom1.wad
 fprime-get-doom
+
+# overwrite an existing target (the only way past a SHA-256 mismatch refusal)
+fprime-get-doom --force
 
 # writes to a specific path
 fprime-get-doom -o /var/lib/fprime/doom1.wad

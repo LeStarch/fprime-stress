@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import os
 import platform as platform_module
 import sys
@@ -235,7 +236,7 @@ def fetch(
                     f"({_format_bytes(size)})"
                 )
             return output
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
             last_error = exc
             if not quiet:
                 print(f"[fprime-get-doom]   {url} failed: {exc}")

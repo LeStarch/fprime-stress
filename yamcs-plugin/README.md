@@ -13,7 +13,7 @@ with the extension directory:
 ```sh
 fprime-yamcs \
     --yamcs-web-extension-dirs <path-to-fprime-stress>/yamcs-plugin/doom-display \
-    --yamcs-realtime-only-channels 'DoomSubtopology.doom.FrameOut*' 'DoomSubtopology.doom.PaletteOut'
+    --yamcs-realtime-only-channels 'DoomSubtopology.frameTlmProcessor.FrameRow*' 'DoomSubtopology.frameTlmProcessor.PaletteOut'
 ```
 
 Open the YAMCS web UI and click the red **DOOM** button in the lower

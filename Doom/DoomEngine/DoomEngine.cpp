@@ -414,7 +414,9 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
         m_engineRunning.store(false);
         this->log_ACTIVITY_HI_EngineStopped();
     }
-    this->publishState(EngineState::OFF);
+    // FAILED is terminal: a Stop must not make the engine look resumable.
+    const bool failed = m_engineFaulted.load() || (m_lastState.load() == EngineState::FAILED);
+    this->publishState(failed ? EngineState::FAILED : EngineState::OFF);
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 

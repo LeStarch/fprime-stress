@@ -477,6 +477,12 @@ void DoomEngineTester::testEngineFaultStopsEngine() {
     this->sendCmd_Reset(TEST_INSTANCE_ID, 1);
     ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RESET, 1, Fw::CmdResponse::EXECUTION_ERROR);
     ASSERT_EVENTS_ResetNotStarted_SIZE(1);
+
+    // Stop on a faulted engine must not re-publish OFF: FAILED is terminal.
+    this->sendCmd_Stop(TEST_INSTANCE_ID, 2);
+    ASSERT_CMD_RESPONSE(2, DoomEngine::OPCODE_STOP, 2, Fw::CmdResponse::OK);
+    ASSERT_TLM_State_SIZE(3);
+    ASSERT_TLM_State(2, Doom::EngineState::FAILED);
     this->component.m_engineCreated = false;
 }
 
