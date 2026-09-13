@@ -74,12 +74,12 @@ void DoomEngineTester::testCommandsEnqueueKeys() {
     this->sendCmd_KeyTap(TEST_INSTANCE_ID, cmdSeq, Doom::DoomKey::FIRE);
     this->sendCmd_KeyDown(TEST_INSTANCE_ID, cmdSeq + 1, Doom::DoomKey::UP);
     this->sendCmd_KeyUp(TEST_INSTANCE_ID, cmdSeq + 2, Doom::DoomKey::UP);
-    this->sendCmd_RawKey(TEST_INSTANCE_ID, cmdSeq + 3, true, static_cast<U8>(0x42));
+    this->sendCmd_RawKey(TEST_INSTANCE_ID, cmdSeq + 3, true, static_cast<U8>(Doom::DoomKey::TAB));
 
     // KeyTap -> (true, FIRE), <tic barrier>, (false, FIRE)
     // KeyDown -> (true, UP)
     // KeyUp -> (false, UP)
-    // RawKey -> (true, 0x42)
+    // RawKey -> (true, TAB)
     // One drain (= one engine tic) stops at the barrier: only the press
     // is visible; the release and everything behind it land next tic.
     bool pressed[8] = {false};
@@ -98,7 +98,7 @@ void DoomEngineTester::testCommandsEnqueueKeys() {
     ASSERT_FALSE(pressed[2]);
     ASSERT_EQ(code[2], static_cast<U8>(Doom::DoomKey::UP));
     ASSERT_TRUE(pressed[3]);
-    ASSERT_EQ(code[3], 0x42);
+    ASSERT_EQ(code[3], static_cast<U8>(Doom::DoomKey::TAB));
 
     ASSERT_CMD_RESPONSE_SIZE(4);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_KEYTAP, cmdSeq, Fw::CmdResponse::OK);
@@ -116,7 +116,7 @@ void DoomEngineTester::testParallelPortsEnqueueKeys() {
     this->invoke_to_keyDownIn(0, shift_key);
     this->invoke_to_keyUpIn(0, shift_key);
 
-    this->invoke_to_rawKeyIn(0, false, static_cast<U8>(0x7F));
+    this->invoke_to_rawKeyIn(0, false, static_cast<U8>(Doom::DoomKey::N));
 
     bool pressed[8] = {false};
     U8 code[8] = {0};
@@ -134,22 +134,46 @@ void DoomEngineTester::testParallelPortsEnqueueKeys() {
     ASSERT_FALSE(pressed[2]);
     ASSERT_EQ(code[2], static_cast<U8>(Doom::DoomKey::SHIFT));
     ASSERT_FALSE(pressed[3]);
-    ASSERT_EQ(code[3], 0x7F);
+    ASSERT_EQ(code[3], static_cast<U8>(Doom::DoomKey::N));
 
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(0);
 }
 
+void DoomEngineTester::testRawKeyRejectsUnlistedCode() {
+    // Only DoomKey enumerators may reach the engine: 'y' (quit confirm),
+    // F-keys and arbitrary bytes are rejected with KeyRejected and
+    // never queued, on both the command and the port path.
+    this->sendCmd_RawKey(TEST_INSTANCE_ID, 0, true, static_cast<U8>('y'));
+    ASSERT_CMD_RESPONSE_SIZE(1);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RAWKEY, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_KeyRejected_SIZE(1);
+    ASSERT_EVENTS_KeyRejected(0, static_cast<U8>('y'), Doom::KeyQueueStatus::CODE_NOT_ALLOWED);
+
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(0xBC));  // KEY_F2 (save game)
+    ASSERT_EVENTS_KeyRejected_SIZE(2);
+    ASSERT_EVENTS_KeyRejected(1, static_cast<U8>(0xBC), Doom::KeyQueueStatus::CODE_NOT_ALLOWED);
+    ASSERT_EQ(this->component.m_keyQueueCount, 0u);
+    ASSERT_EQ(this->component.m_keysDropped, 0u);
+
+    // Every enumerator passes the allow-list.
+    this->sendCmd_RawKey(TEST_INSTANCE_ID, 1, true, static_cast<U8>(Doom::DoomKey::WEAPON7));
+    ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RAWKEY, 1, Fw::CmdResponse::OK);
+    ASSERT_EQ(this->component.m_keyQueueCount, 1u);
+    ASSERT_EVENTS_KeyRejected_SIZE(2);
+}
+
 void DoomEngineTester::testOverflowEmitsEvent() {
     const FwSizeType cap = DoomEngine::KEY_QUEUE_CAPACITY;
+    Doom::DoomKey fire_key(Doom::DoomKey::FIRE);
     for (FwSizeType i = 0; i < cap; ++i) {
-        this->invoke_to_rawKeyIn(0, true, static_cast<U8>(i & 0xFFu));
+        this->invoke_to_keyDownIn(0, fire_key);
     }
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(0);
 
-    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(0xAA));
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(Doom::DoomKey::USE));
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(1);
 
-    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(0xBB));
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(Doom::DoomKey::TAB));
     ASSERT_EVENTS_KeyQueueOverflow_SIZE(1);
 
     bool pressed[DoomEngine::KEY_QUEUE_CAPACITY] = {false};
@@ -220,8 +244,8 @@ void DoomEngineTester::testSchedInAppliesReset() {
     // is emitted, and no frame is played back or ticked that cycle.
     // D_StartTitle only latches engine-side flags, so the path is safe
     // to drive without a created engine.
-    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(0x10));
-    this->invoke_to_rawKeyIn(0, false, static_cast<U8>(0x10));
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>(Doom::DoomKey::USE));
+    this->invoke_to_rawKeyIn(0, false, static_cast<U8>(Doom::DoomKey::USE));
     ASSERT_EQ(this->component.m_keyQueueCount, 2u);
     this->component.m_meltCount = 2U;
     this->component.m_meltHead = 1U;
@@ -433,8 +457,9 @@ void DoomEngineTester::testKeyTapAllOrNothing() {
     // barrier, up), so it must enqueue nothing and count both key
     // events as dropped.
     const FwSizeType cap = DoomEngine::KEY_QUEUE_CAPACITY;
+    Doom::DoomKey fire_key(Doom::DoomKey::FIRE);
     for (FwSizeType i = 0; i + 2 < cap; ++i) {
-        this->invoke_to_rawKeyIn(0, true, static_cast<U8>(i & 0xFFu));
+        this->invoke_to_keyDownIn(0, fire_key);
     }
     Doom::DoomKey use_key(Doom::DoomKey::USE);
     this->invoke_to_keyTapIn(0, use_key);
@@ -597,6 +622,24 @@ void DoomEngineTester::testStartCommandRejectsWhenRunning() {
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
     ASSERT_EVENTS_StartRejected_SIZE(1);
     ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::ALREADY_RUNNING);
+}
+
+void DoomEngineTester::testSetWadPathRejectsOverlongPath() {
+    // An operator path that does not fit is rejected with an event and
+    // leaves the path unset; it must not assert.
+    char longPath[DoomEngine::WAD_PATH_MAX + 8];
+    (void)::memset(longPath, 'a', sizeof(longPath));
+    longPath[sizeof(longPath) - 1] = '\0';
+    ASSERT_EQ(this->component.setWadPath(longPath), Doom::InitStatus::WAD_PATH_TOO_LONG);
+    ASSERT_EVENTS_WadPathRejected_SIZE(1);
+    ASSERT_EVENTS_WadPathRejected(0, static_cast<U32>(DoomEngine::WAD_PATH_MAX), Doom::InitStatus::WAD_PATH_TOO_LONG);
+    ASSERT_EQ(this->component.m_wadPath[0], '\0');
+    ASSERT_EQ(this->component.initEngine(), Doom::InitStatus::WAD_UNAVAILABLE);
+
+    // The longest accepted path is WAD_PATH_MAX - 1 characters.
+    longPath[DoomEngine::WAD_PATH_MAX - 1] = '\0';
+    ASSERT_EQ(this->component.setWadPath(longPath), Doom::InitStatus::OK);
+    ASSERT_EVENTS_WadPathRejected_SIZE(1);
 }
 
 void DoomEngineTester::testStartRejectsUnconfiguredWad() {

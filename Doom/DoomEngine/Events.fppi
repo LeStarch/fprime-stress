@@ -23,6 +23,28 @@ event KeyQueueOverflow() \
   id 2 \
   format "DOOM key queue overflow - input dropped"
 
+@ A raw key code (RawKey command or rawKeyIn port) is not one of the
+@ DoomKey enumerators and was not passed to the engine. The allow-list
+@ keeps save/quit shortcuts and untested engine bindings unreachable.
+event KeyRejected(
+                   code: U8 @< The rejected raw key code
+                   reason: Doom.KeyQueueStatus @< Which check failed
+                 ) \
+  severity warning low \
+  id 11 \
+  format "Key code {} rejected - {}" \
+  throttle 5
+
+@ The WAD path handed to setWadPath does not fit WAD_PATH_MAX; the
+@ path is left unset, so initEngine reports WAD_UNAVAILABLE.
+event WadPathRejected(
+                       length: U32 @< Length of the offending path
+                       reason: Doom.InitStatus @< Which check failed
+                     ) \
+  severity warning high \
+  id 12 \
+  format "WAD path of {} characters rejected - {}"
+
 @ A Start request was rejected; reason names the failed precondition
 @ (ALREADY_RUNNING, START_PENDING, NOT_INITIALIZED, FAULTED).
 event StartRejected(
@@ -70,7 +92,8 @@ event WadInvalid(
   format "Engine init rejected - WAD file {} invalid: {}"
 
 @ The engine raised an internal fatal error (I_Error) or requested to
-@ quit (I_Quit). The engine is stopped and permanently unavailable;
+@ quit (I_Quit; unreachable from the DoomKey allow-list, which omits
+@ the 'y' confirm). The engine is stopped and permanently unavailable;
 @ State is FAILED (no in-process recovery: the engine's globals are
 @ left as-is). Replaces the upstream handler's process exit().
 event EngineFault(

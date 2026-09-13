@@ -20,15 +20,16 @@ module Doom {
     @ Outgoing palette.
     output port paletteOut: Doom.PaletteSend
 
-    @ A frame arrived whose dimensions or buffer size are inconsistent
-    @ with the configured downsample factor; the frame was dropped.
+    @ A frame arrived that failed validation against the configured
+    @ downsample factor or its own buffer length; the frame was dropped.
     event InvalidFrame(
                         width: U16 @< Incoming frame width
                         height: U16 @< Incoming frame height
                         factor: U8 @< Active downsample factor
+                        reason: Doom.FrameRejectReason @< Which check failed
                       ) \
       severity warning low \
-      format "Dropped frame: {} x {} not divisible by factor {} or buffer too small" \
+      format "Dropped frame: {} x {} at factor {} rejected - {}" \
       throttle 5
 
     @ Time get port used to tag events.

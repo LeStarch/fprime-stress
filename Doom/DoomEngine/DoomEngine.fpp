@@ -57,7 +57,7 @@ module Doom {
     @ Release a previously held named key.
     sync input port keyUpIn: Doom.KeyEvent
 
-    @ Raw press-or-release with an arbitrary key code.
+    @ Raw press-or-release by key code; restricted to DoomKey enumerators.
     sync input port rawKeyIn: Doom.RawKeyEvent
 
     # ------------------------------------------------------------------

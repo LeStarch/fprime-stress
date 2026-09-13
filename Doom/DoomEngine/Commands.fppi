@@ -41,9 +41,9 @@ sync command KeyUp(
                   ) \
   opcode 3
 
-@ Press or release a raw DOOM key code, bypassing the named enum.
-@ Intended for ground tooling or sequences that need arbitrary keys
-@ (numeric digits, characters, etc.) without growing the enum.
+@ Press or release a DOOM key given by its raw code, for ground tooling
+@ that works in doomkeys.h values. The code must still be a DoomKey
+@ enumerator; anything else is rejected with KeyRejected.
 sync command RawKey(
                      pressed: bool
                      code: U8

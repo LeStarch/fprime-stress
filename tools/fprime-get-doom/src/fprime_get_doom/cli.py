@@ -70,12 +70,7 @@ DEFAULT_MIRRORS: List[str] = [
     "https://archive.org/download/DoomsharewareEpisode/doom1.wad",
 ]
 
-# Default output path matches the F Prime build-artifacts layout. When
-# `fprime-util build` runs from the project root it produces
-# `build-artifacts/<platform>/<deployment>/{bin,dict,lib}/`. We deposit
-# the WAD into a sibling `data/` directory so the deployment binary can
-# find it via the canonical `../data/doom1.wad` relative path when
-# launched from inside its own `bin/` directory.
+# Used when no build-artifacts layout can be resolved; see default_output_path.
 FALLBACK_OUTPUT = Path("doom1.wad")
 
 
@@ -88,6 +83,11 @@ def default_output_path(
     when a single ``<platform>/<deployment>`` pair can be unambiguously
     selected under ``build-artifacts/``. Falls back to ``./doom1.wad``
     otherwise.
+
+    ``fprime-util build`` produces ``build-artifacts/<platform>/<deployment>/
+    {bin,dict,lib}/``; the WAD goes into a sibling ``data/`` directory so the
+    deployment binary finds it at the canonical ``../data/doom1.wad`` path
+    when launched from inside its own ``bin/`` directory.
 
     Selection rules:
 

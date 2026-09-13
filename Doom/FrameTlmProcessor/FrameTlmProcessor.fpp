@@ -19,15 +19,15 @@ module Doom {
     @ Time get port used to tag telemetry samples and events.
     time get port timeCaller
 
-    @ A frame arrived whose dimensions differ from the configured
-    @ downsampled size, or whose buffer is smaller than width * height;
-    @ it was dropped.
+    @ A frame arrived that failed validation against the configured
+    @ downsampled size or its own buffer length; it was dropped.
     event InvalidFrame(
                         width: U16 @< Incoming frame width
                         height: U16 @< Incoming frame height
+                        reason: Doom.FrameRejectReason @< Which check failed
                       ) \
       severity warning low \
-      format "Dropped frame: {} x {} does not match configured dimensions or buffer too small" \
+      format "Dropped frame: {} x {} rejected - {}" \
       throttle 5
 
     @ Enables event handling.

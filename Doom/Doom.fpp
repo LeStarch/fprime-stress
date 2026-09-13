@@ -67,6 +67,7 @@ module Doom {
     WAD_UNAVAILABLE = 1  @< No WAD path configured or the file could not be opened.
     WAD_INVALID     = 2  @< The WAD failed structural validation (see WadStatus).
     ENGINE_FAULT    = 3  @< doomgeneric_Create raised I_Error/I_Quit.
+    WAD_PATH_TOO_LONG = 4  @< The configured WAD path does not fit WAD_PATH_MAX.
   } default OK
 
   @ Outcome of a Start or Reset request; the rejections name the
@@ -81,9 +82,18 @@ module Doom {
 
   @ Outcome of queuing key input for the engine.
   enum KeyQueueStatus {
-    QUEUED     = 0  @< All entries of the event were queued.
-    QUEUE_FULL = 1  @< No entry was queued; input dropped and counted.
+    QUEUED           = 0  @< All entries of the event were queued.
+    QUEUE_FULL       = 1  @< No entry was queued; input dropped and counted.
+    CODE_NOT_ALLOWED = 2  @< Key code is not a DoomKey enumerator; nothing queued.
   } default QUEUED
+
+  @ Why an incoming raw frame was dropped instead of processed.
+  enum FrameRejectReason {
+    BAD_WIDTH    = 0  @< Width does not match / divide by the configured value.
+    BAD_HEIGHT   = 1  @< Height does not match / divide by the configured value.
+    NULL_BUFFER  = 2  @< Pixel buffer has no data pointer.
+    SHORT_BUFFER = 3  @< Pixel buffer holds fewer than width * height bytes.
+  } default BAD_WIDTH
 
   # ----------------------------------------------------------------------
   # Ground-facing key enumeration
@@ -106,8 +116,8 @@ module Doom {
     ENTER       = 0x0D  @< Menu confirm (KEY_ENTER).
     TAB         = 0x09  @< Automap (KEY_TAB).
     SHIFT       = 0xB6  @< Run modifier (KEY_RSHIFT).
-    Y           = 0x79  @< Confirmation 'y'.
-    N           = 0x6E  @< Confirmation 'n'.
+    @ 'y' is deliberately absent: it confirms Quit Game / End Game, which faults the engine.
+    N           = 0x6E  @< Decline a menu prompt ('n').
     WEAPON1     = 0x31  @< Select weapon 1 ('1').
     WEAPON2     = 0x32  @< Select weapon 2 ('2').
     WEAPON3     = 0x33  @< Select weapon 3 ('3').
@@ -135,8 +145,8 @@ module Doom {
                  key: Doom.DoomKey
                )
 
-  @ Raw key event. Used by the rawKeyIn parallel input port for
-  @ arbitrary key codes not covered by the named enum.
+  @ Raw key event. Used by the rawKeyIn parallel input port; the code
+  @ must be a DoomKey enumerator or it is rejected (KeyRejected).
   port RawKeyEvent(
                     pressed: bool
                     code: U8

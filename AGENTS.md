@@ -34,11 +34,22 @@ yes, it is an enum.
 
 ### STRESS-2 — Validate before entering the engine
 
-Ground-reachable inputs that reach stock `doomgeneric` (WAD file, key
-codes, frame geometry) are validated in a dedicated helper and rejected
-with a warning event carrying the failed check (per STRESS-1) before
-the engine sees them. The engine's own `I_Error` path is the last line
-of defence, never the first.
+Ground-reachable inputs that reach stock `doomgeneric` (WAD path and
+file, key codes, frame geometry) are validated in a dedicated helper
+and rejected with a warning event carrying the failed check (per
+STRESS-1) before the engine sees them: `setWadPath` / `validateWad`
+(`WadPathRejected`, `WadInvalid`), `validateKeyCode` (`KeyRejected`),
+the frame components' size checks (`InvalidFrame`). The engine's own
+`I_Error` path is the last line of defence, never the first.
+
+Key codes are an allow-list: only `DoomKey` enumerators reach the
+engine, and the enum deliberately omits the `'y'` confirm and every
+function key, so the Quit / End Game confirmation (`I_Quit` → terminal
+`FAILED`) and the F2/F6/F9 save and quick-load shortcuts are unreachable
+from the ground. Known residual: the in-menu Save Game entry is still
+navigable with ESCAPE/DOWN/ENTER and writes `doomsav<n>.dsg` in the
+working directory. Adding an enumerator is adding a ground-reachable
+engine binding: check what stock `m_menu.c` / `g_game.c` do with it.
 
 ## Layout
 

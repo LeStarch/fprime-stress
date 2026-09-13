@@ -31,6 +31,8 @@ class DoomEngineTester final : public DoomEngineGTestBase {
 
     void testCommandsEnqueueKeys();
     void testParallelPortsEnqueueKeys();
+    void testRawKeyRejectsUnlistedCode();
+    void testSetWadPathRejectsOverlongPath();
     void testOverflowEmitsEvent();
     void testStopCommandResponds();
     void testResetRejectsBeforeStart();

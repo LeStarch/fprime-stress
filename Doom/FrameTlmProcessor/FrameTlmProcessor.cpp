@@ -239,9 +239,20 @@ void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
     // misbehaving upstream must not take the deployment down. Dimensions
     // must match the compile-time downsample configuration exactly.
     const FwSizeType frameBytes = static_cast<FwSizeType>(width) * static_cast<FwSizeType>(height);
-    if ((width != ROW_WIDTH) || (height != ROW_HEIGHT) || (pixels.getData() == nullptr) ||
-        (pixels.getSize() < frameBytes)) {
-        this->log_WARNING_LO_InvalidFrame(width, height);
+    if (width != ROW_WIDTH) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::BAD_WIDTH);
+        return;
+    }
+    if (height != ROW_HEIGHT) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::BAD_HEIGHT);
+        return;
+    }
+    if (pixels.getData() == nullptr) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::NULL_BUFFER);
+        return;
+    }
+    if (pixels.getSize() < frameBytes) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::SHORT_BUFFER);
         return;
     }
     // A good frame re-arms the throttle so intermittent faults keep reporting.

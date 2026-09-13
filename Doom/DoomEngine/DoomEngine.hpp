@@ -73,9 +73,10 @@ class DoomEngine final : public DoomEngineComponentBase {
     ~DoomEngine() override;
 
     //! Set the path to the IWAD passed to doomgeneric_Create. Must be
-    //! called before initEngine. Asserts if the path does not fit in
-    //! WAD_PATH_MAX (rejects rather than truncates).
-    void setWadPath(const char* wadPath);
+    //! called before initEngine. A path that does not fit WAD_PATH_MAX
+    //! is rejected (WadPathRejected event, path left unset) rather than
+    //! truncated.
+    InitStatus setWadPath(const char* wadPath);
 
     //! Initialization-time engine bring-up: opens the WAD and runs
     //! doomgeneric_Create (the engine's one-shot init, including all
@@ -173,6 +174,13 @@ class DoomEngine final : public DoomEngineComponentBase {
     // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
+
+    //! Allow-list check for raw key codes: only DoomKey enumerators
+    //! reach the engine. Returns QUEUED when allowed.
+    static KeyQueueStatus validateKeyCode(U8 code);
+
+    //! Validate a raw code, then enqueueKey; emits KeyRejected on failure.
+    KeyQueueStatus enqueueRawKey(bool pressed, U8 code);
 
     //! Enqueue one (pressed, code) key event under m_keyMutex.
     KeyQueueStatus enqueueKey(bool pressed, U8 code);

@@ -97,6 +97,18 @@ TEST(OffNominal, InitRejectsMalformedWad) {
     tester->testInitRejectsMalformedWad();
 }
 
+TEST(Nominal, RawKeyRejectsUnlistedCode) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testRawKeyRejectsUnlistedCode();
+}
+
+TEST(Nominal, SetWadPathRejectsOverlongPath) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testSetWadPathRejectsOverlongPath();
+}
+
 TEST(Nominal, StartRejectsUnconfiguredWad) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

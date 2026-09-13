@@ -108,12 +108,13 @@ void FrameTlmProcessorTester::testRejectsOversizedDimensions() {
     this->sendFrame(1U, w, 401U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-    ASSERT_EVENTS_InvalidFrame(0, w, 401U);
+    ASSERT_EVENTS_InvalidFrame(0, w, 401U, Doom::FrameRejectReason::BAD_HEIGHT);
 
     // Width other than the configured row width - drop with an event.
     this->sendFrame(1U, static_cast<U16>(w + 1U), 100U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(2);
+    ASSERT_EVENTS_InvalidFrame(1, static_cast<U16>(w + 1U), 100U, Doom::FrameRejectReason::BAD_WIDTH);
 }
 
 void FrameTlmProcessorTester::testRejectsShortBuffer() {
@@ -122,6 +123,7 @@ void FrameTlmProcessorTester::testRejectsShortBuffer() {
     this->sendFrame(1U, w, h, (static_cast<U32>(w) * static_cast<U32>(h)) - 1U);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
+    ASSERT_EVENTS_InvalidFrame(0, w, h, Doom::FrameRejectReason::SHORT_BUFFER);
 }
 
 }  // namespace Doom

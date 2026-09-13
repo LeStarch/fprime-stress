@@ -23,6 +23,7 @@
 #include <Fw/Buffer/Buffer.hpp>
 #include <Fw/Types/Assert.hpp>
 #include <Fw/Types/String.hpp>
+#include <Fw/Types/StringUtils.hpp>
 #include <Os/File.hpp>
 
 #include <cstdarg>
@@ -102,14 +103,19 @@ DoomEngine* DoomEngine::getInstance() {
     return s_instance;
 }
 
-void DoomEngine::setWadPath(const char* wadPath) {
+InitStatus DoomEngine::setWadPath(const char* wadPath) {
     FW_ASSERT(wadPath != nullptr);
-    const FwSizeType len = static_cast<FwSizeType>(::strlen(wadPath));
-    // Reject rather than silently truncate: a clipped path would fail
-    // WAD load far from the actual cause.
-    FW_ASSERT(len < WAD_PATH_MAX, static_cast<FwAssertArgType>(len));
+    // Operator input: reject rather than truncate, a clipped path would
+    // fail WAD load far from the actual cause.
+    const FwSizeType len = Fw::StringUtils::string_length(wadPath, WAD_PATH_MAX);
+    if (len >= WAD_PATH_MAX) {
+        m_wadPath[0] = '\0';
+        this->log_WARNING_HI_WadPathRejected(static_cast<U32>(len), InitStatus::WAD_PATH_TOO_LONG);
+        return InitStatus::WAD_PATH_TOO_LONG;
+    }
     (void)::memcpy(m_wadPath, wadPath, len);
     m_wadPath[len] = '\0';
+    return InitStatus::OK;
 }
 
 // ----------------------------------------------------------------------
@@ -530,7 +536,7 @@ void DoomEngine::KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::D
 }
 
 void DoomEngine::RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed, U8 code) {
-    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueKey(pressed, code)));
+    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueRawKey(pressed, code)));
 }
 
 // ----------------------------------------------------------------------
@@ -555,7 +561,7 @@ void DoomEngine::keyUpIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& k
 }
 
 void DoomEngine::rawKeyIn_handler(FwIndexType /*portNum*/, bool pressed, U8 code) {
-    (void)this->enqueueKey(pressed, code);
+    (void)this->enqueueRawKey(pressed, code);
 }
 
 // ----------------------------------------------------------------------
@@ -600,6 +606,21 @@ KeyQueueStatus DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count
         this->log_WARNING_LO_KeyQueueOverflow();
     }
     return status;
+}
+
+KeyQueueStatus DoomEngine::validateKeyCode(U8 code) {
+    DoomKey key;
+    key.e = static_cast<DoomKey::T>(code);
+    return key.isValid() ? KeyQueueStatus::QUEUED : KeyQueueStatus::CODE_NOT_ALLOWED;
+}
+
+KeyQueueStatus DoomEngine::enqueueRawKey(bool pressed, U8 code) {
+    const KeyQueueStatus status = validateKeyCode(code);
+    if (status != KeyQueueStatus::QUEUED) {
+        this->log_WARNING_LO_KeyRejected(code, status);
+        return status;
+    }
+    return this->enqueueKey(pressed, code);
 }
 
 KeyQueueStatus DoomEngine::enqueueKey(bool pressed, U8 code) {
@@ -851,6 +872,7 @@ void I_Error(char* error, ...) {
 }
 
 // Replaces upstream I_Quit (in-game quit), whose exit handlers exit().
+// Unreachable through the DoomKey allow-list ('y' confirm omitted).
 void I_Quit(void) {
     Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
     FW_ASSERT(inst != nullptr);
