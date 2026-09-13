@@ -59,6 +59,7 @@ module Doom {
     SHORT_DIRECTORY         = 7  @< Directory read returned fewer bytes than declared.
     LUMP_OUTSIDE_FILE       = 8  @< A lump's filepos + size exceeds the file.
     REQUIRED_LUMP_MISSING   = 9  @< PLAYPAL, COLORMAP, PNAMES or TEXTURE1 absent.
+    READ_FAILED             = 10 @< A seek or read returned an I/O error.
   } default VALID
 
   @ Outcome of initEngine (topology-time engine creation).

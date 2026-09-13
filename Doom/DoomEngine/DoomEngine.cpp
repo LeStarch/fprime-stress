@@ -308,9 +308,13 @@ U32 readLe32(const U8* p) {
            (static_cast<U32>(p[3]) << 24);
 }
 
-bool readExact(Os::File& file, U8* buffer, FwSizeType bytes) {
+// Read exactly `bytes`; `shortStatus` names the check a short read fails.
+WadStatus readExact(Os::File& file, U8* buffer, FwSizeType bytes, WadStatus shortStatus) {
     FwSizeType got = bytes;
-    return (file.read(buffer, got) == Os::File::OP_OK) && (got == bytes);
+    if (file.read(buffer, got) != Os::File::OP_OK) {
+        return WadStatus::READ_FAILED;
+    }
+    return (got == bytes) ? WadStatus(WadStatus::VALID) : shortStatus;
 }
 }  // namespace
 
@@ -320,8 +324,12 @@ WadStatus DoomEngine::validateWad(Os::File& wad) {
         return WadStatus::SIZE_UNKNOWN;
     }
     U8 header[WAD_HEADER_BYTES];
-    if ((wad.seek(0, Os::File::SeekType::ABSOLUTE) != Os::File::OP_OK) || !readExact(wad, header, sizeof(header))) {
-        return WadStatus::SHORT_HEADER;
+    if (wad.seek(0, Os::File::SeekType::ABSOLUTE) != Os::File::OP_OK) {
+        return WadStatus::READ_FAILED;
+    }
+    WadStatus readStatus = readExact(wad, header, sizeof(header), WadStatus::SHORT_HEADER);
+    if (readStatus != WadStatus::VALID) {
+        return readStatus;
     }
     if (::memcmp(header, "IWAD", 4) != 0) {
         return WadStatus::NOT_IWAD;
@@ -345,8 +353,9 @@ WadStatus DoomEngine::validateWad(Os::File& wad) {
     for (U32 done = 0U; done < numLumps; done += WAD_DIR_CHUNK_ENTRIES) {
         const U32 remaining = numLumps - done;
         const FwSizeType count = (remaining < WAD_DIR_CHUNK_ENTRIES) ? remaining : WAD_DIR_CHUNK_ENTRIES;
-        if (!readExact(wad, chunk, count * WAD_DIR_ENTRY_BYTES)) {
-            return WadStatus::SHORT_DIRECTORY;
+        readStatus = readExact(wad, chunk, count * WAD_DIR_ENTRY_BYTES, WadStatus::SHORT_DIRECTORY);
+        if (readStatus != WadStatus::VALID) {
+            return readStatus;
         }
         for (FwSizeType i = 0U; i < count; i++) {
             const U8* const entry = &chunk[i * WAD_DIR_ENTRY_BYTES];
@@ -548,16 +557,23 @@ void DoomEngine::RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed
 // KeyQueueOverflow event the same way.
 // ----------------------------------------------------------------------
 
+// Port producers are not deserialized, so the enum value is re-validated.
 void DoomEngine::keyTapIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
-    (void)this->enqueueKeyTap(static_cast<U8>(key.e));
+    const U8 code = static_cast<U8>(key.e);
+    const KeyQueueStatus status = validateKeyCode(code);
+    if (status != KeyQueueStatus::QUEUED) {
+        this->log_WARNING_LO_KeyRejected(code, status);
+        return;
+    }
+    (void)this->enqueueKeyTap(code);
 }
 
 void DoomEngine::keyDownIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
-    (void)this->enqueueKey(true, static_cast<U8>(key.e));
+    (void)this->enqueueRawKey(true, static_cast<U8>(key.e));
 }
 
 void DoomEngine::keyUpIn_handler(FwIndexType /*portNum*/, const Doom::DoomKey& key) {
-    (void)this->enqueueKey(false, static_cast<U8>(key.e));
+    (void)this->enqueueRawKey(false, static_cast<U8>(key.e));
 }
 
 void DoomEngine::rawKeyIn_handler(FwIndexType /*portNum*/, bool pressed, U8 code) {

@@ -155,11 +155,22 @@ void DoomEngineTester::testRawKeyRejectsUnlistedCode() {
     ASSERT_EQ(this->component.m_keyQueueCount, 0u);
     ASSERT_EQ(this->component.m_keysDropped, 0u);
 
+    // Enum-typed ports are not deserialized: an out-of-range value from a
+    // wired producer is rejected at the boundary too.
+    Doom::DoomKey bad;
+    bad.e = static_cast<Doom::DoomKey::T>('y');
+    this->invoke_to_keyDownIn(0, bad);
+    this->invoke_to_keyUpIn(0, bad);
+    this->invoke_to_keyTapIn(0, bad);
+    ASSERT_EVENTS_KeyRejected_SIZE(5);
+    ASSERT_EVENTS_KeyRejected(4, static_cast<U8>('y'), Doom::KeyQueueStatus::CODE_NOT_ALLOWED);
+    ASSERT_EQ(this->component.m_keyQueueCount, 0u);
+
     // Every enumerator passes the allow-list.
     this->sendCmd_RawKey(TEST_INSTANCE_ID, 1, true, static_cast<U8>(Doom::DoomKey::WEAPON7));
     ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RAWKEY, 1, Fw::CmdResponse::OK);
     ASSERT_EQ(this->component.m_keyQueueCount, 1u);
-    ASSERT_EVENTS_KeyRejected_SIZE(2);
+    ASSERT_EVENTS_KeyRejected_SIZE(5);
 }
 
 void DoomEngineTester::testOverflowEmitsEvent() {

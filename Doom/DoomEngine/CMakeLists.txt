@@ -110,7 +110,7 @@ target_include_directories(fprime_stress_doomgeneric
 )
 # Upstream DOOM uses CMAP256 to render a palette-indexed 8-bit frame.
 # We use doomgeneric's native 640x400 resolution to make this a useful
-# stress test - 256 kB / frame * 30 fps = 7.5 MB/s sustained downlink.
+# stress test - 256 kB / frame * 35 Hz = 9.0 MB/s raw before downsampling.
 target_compile_definitions(fprime_stress_doomgeneric
     PUBLIC
         CMAP256

@@ -43,7 +43,8 @@ the frame components' size checks (`InvalidFrame`). The engine's own
 `I_Error` path is the last line of defence, never the first.
 
 Key codes are an allow-list: only `DoomKey` enumerators reach the
-engine, and the enum deliberately omits the `'y'` confirm and every
+engine (checked on every command and port path, since port producers
+are not deserialized), and the enum deliberately omits the `'y'` confirm and every
 function key, so the Quit / End Game confirmation (`I_Quit` → terminal
 `FAILED`) and the F2/F6/F9 save and quick-load shortcuts are unreachable
 from the ground. Known residual: the in-menu Save Game entry is still
