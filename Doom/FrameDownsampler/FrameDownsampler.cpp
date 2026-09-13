@@ -29,12 +29,25 @@ void FrameDownsampler::frameIn_handler(FwIndexType portNum,
 
     // Validate rather than assert: dimensions arrive over a port and a
     // misbehaving upstream must not take the deployment down.
-    const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
-    if (((width % factor) != 0U) || ((height % factor) != 0U) || (pixels.getData() == nullptr) ||
-        (pixels.getSize() < frameBytes)) {
-        this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor));
+    const FwSizeType frameBytes = static_cast<FwSizeType>(width) * static_cast<FwSizeType>(height);
+    if ((width % factor) != 0U) {
+        this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor), FrameRejectReason::BAD_WIDTH);
         return;
     }
+    if ((height % factor) != 0U) {
+        this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor), FrameRejectReason::BAD_HEIGHT);
+        return;
+    }
+    if (pixels.getData() == nullptr) {
+        this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor), FrameRejectReason::NULL_BUFFER);
+        return;
+    }
+    if (pixels.getSize() < frameBytes) {
+        this->log_WARNING_LO_InvalidFrame(width, height, static_cast<U8>(factor), FrameRejectReason::SHORT_BUFFER);
+        return;
+    }
+    // A good frame re-arms the throttle so intermittent faults keep reporting.
+    this->log_WARNING_LO_InvalidFrame_ThrottleClear();
 
     const U16 outWidth = static_cast<U16>(width / factor);
     const U16 outHeight = static_cast<U16>(height / factor);
@@ -49,7 +62,7 @@ void FrameDownsampler::frameIn_handler(FwIndexType portNum,
                 pix[dstRow + c] = pix[srcRow + (c * static_cast<U32>(factor))];
             }
         }
-        pixels.setSize(static_cast<U32>(outWidth) * static_cast<U32>(outHeight));
+        pixels.setSize(static_cast<FwSizeType>(outWidth) * static_cast<FwSizeType>(outHeight));
     }
 
     if (this->isConnected_frameOut_OutputPort(0)) {

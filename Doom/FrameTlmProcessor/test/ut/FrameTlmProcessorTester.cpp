@@ -26,13 +26,43 @@ FrameTlmProcessorTester::~FrameTlmProcessorTester() {
 // ----------------------------------------------------------------------
 
 void FrameTlmProcessorTester::sendFrame(U32 frameNumber, U16 width, U16 height, U32 bufferSize) {
-    // Position-dependent pattern so any offset bug fails the checks.
-    const U32 bytes = static_cast<U32>(width) * static_cast<U32>(height);
+    // Position-dependent pattern so any offset bug fails the checks. Oversized
+    // dimensions are rejected before the pixels are read, so clamp the fill.
+    const U32 requested = static_cast<U32>(width) * static_cast<U32>(height);
+    const U32 bytes = (requested < FRAME_BYTES) ? requested : FRAME_BYTES;
     for (U32 i = 0; i < bytes; i++) {
         m_pixels[i] = static_cast<U8>(i % 251U);
     }
     Fw::Buffer buffer(m_pixels, bufferSize);
     this->invoke_to_frameIn(0, frameNumber, width, height, buffer);
+}
+
+void FrameTlmProcessorTester::checkRow(const Doom::FrameRow& row, U32 frameNumber, U16 rowIndex, U16 width) {
+    // Pixel pattern follows sendFrame: value = (row * width + col) % 251.
+    ASSERT_EQ(row.get_frame(), frameNumber);
+    ASSERT_EQ(row.get_row(), rowIndex);
+    ASSERT_EQ(row.get_width(), width);
+    const U32 base = static_cast<U32>(rowIndex) * static_cast<U32>(width);
+    for (U32 i = 0; i < width; i++) {
+        ASSERT_EQ(row.get_pixels()[i], static_cast<U8>((base + i) % 251U)) << "row " << rowIndex << " pixel " << i;
+    }
+}
+
+const Doom::FrameRow& FrameTlmProcessorTester::lastRow(U16 height) {
+    // The final row's channel depends on the compile-time factor.
+    switch (height) {
+        case 400U:
+            return this->tlmHistory_FrameRow399->at(0).arg;
+        case 200U:
+            return this->tlmHistory_FrameRow199->at(0).arg;
+        case 100U:
+            return this->tlmHistory_FrameRow099->at(0).arg;
+        case 50U:
+            return this->tlmHistory_FrameRow049->at(0).arg;
+        default:
+            EXPECT_EQ(height, 25U) << "unsupported DOWNSAMPLED_HEIGHT";
+            return this->tlmHistory_FrameRow024->at(0).arg;
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -54,14 +84,12 @@ void FrameTlmProcessorTester::testEmitsOneChannelPerRow() {
         ASSERT_TLM_FrameRow399_SIZE(1);
     }
 
-    // The first emitted row carries the right metadata and payload.
-    const Doom::FrameRow& first = this->tlmHistory_FrameRow000->at(0).arg;
-    ASSERT_EQ(first.get_frame(), 5U);
-    ASSERT_EQ(first.get_row(), 0U);
-    ASSERT_EQ(first.get_width(), w);
-    for (U32 i = 0; i < w; i++) {
-        ASSERT_EQ(first.get_pixels()[i], static_cast<U8>(i % 251U)) << "row 0 pixel " << i;
-    }
+    // First, second and last rows carry the right metadata and the
+    // payload slice at the right stride.
+    ASSERT_TLM_FrameRow001_SIZE(1);
+    this->checkRow(this->tlmHistory_FrameRow000->at(0).arg, 5U, 0U, w);
+    this->checkRow(this->tlmHistory_FrameRow001->at(0).arg, 5U, 1U, w);
+    this->checkRow(this->lastRow(h), 5U, static_cast<U16>(h - 1U), w);
     ASSERT_EVENTS_InvalidFrame_SIZE(0);
 }
 
@@ -80,12 +108,13 @@ void FrameTlmProcessorTester::testRejectsOversizedDimensions() {
     this->sendFrame(1U, w, 401U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-    ASSERT_EVENTS_InvalidFrame(0, w, 401U);
+    ASSERT_EVENTS_InvalidFrame(0, w, 401U, Doom::FrameRejectReason::BAD_HEIGHT);
 
     // Width other than the configured row width - drop with an event.
     this->sendFrame(1U, static_cast<U16>(w + 1U), 100U, FRAME_BYTES);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(2);
+    ASSERT_EVENTS_InvalidFrame(1, static_cast<U16>(w + 1U), 100U, Doom::FrameRejectReason::BAD_WIDTH);
 }
 
 void FrameTlmProcessorTester::testRejectsShortBuffer() {
@@ -94,6 +123,7 @@ void FrameTlmProcessorTester::testRejectsShortBuffer() {
     this->sendFrame(1U, w, h, (static_cast<U32>(w) * static_cast<U32>(h)) - 1U);
     ASSERT_TLM_SIZE(0);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
+    ASSERT_EVENTS_InvalidFrame(0, w, h, Doom::FrameRejectReason::SHORT_BUFFER);
 }
 
 }  // namespace Doom

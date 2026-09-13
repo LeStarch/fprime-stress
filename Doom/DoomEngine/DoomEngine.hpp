@@ -4,31 +4,32 @@
 //
 // The engine is driven entirely from the rate-group thread that calls
 // the schedIn port: each call runs one doomgeneric Tick, or replays
-// one buffered melt frame if a screen wipe is pending. Component
-// state is otherwise touched only by threads performing the start/
-// stop handoff (the command-dispatch thread, and the main thread for
-// autoStart) plus the mutex-guarded key queue: forceStart first waits
-// for any in-flight schedIn tick to finish (m_tickInProgress rendezvous),
-// publishes engine state, then stores the atomic m_engineRunning
-// flag, which schedIn_handler loads (seq_cst, ordered against
-// m_tickInProgress) before touching any engine state.
+// one buffered melt frame if a screen wipe is pending. Start and Reset
+// only validate and latch a request (m_startRequested /
+// m_resetRequested); the rate-group thread consumes the latch at the
+// top of its next tick and performs the transition itself, so engine
+// state is mutated by exactly one thread. Stop clears the atomic
+// m_engineRunning flag, which the tick loads before touching the engine.
 //
-// No worker thread is spawned and the tick path never sleeps - the
-// rate group is the sole pacing mechanism (forceStart's bounded
-// rendezvous wait runs on the caller's thread, never the rate-group
-// thread). This makes execution deterministic: cross-thread state is
-// limited to the OSAL mutexes, the std::atomic members, and the
-// bounded Os::Task::delay polling in forceStart's rendezvous.
+// No worker thread is spawned and no path ever sleeps - the rate
+// group is the sole pacing mechanism. Cross-thread state is limited
+// to the OSAL mutexes and the std::atomic members.
 // ======================================================================
 #ifndef Doom_DoomEngine_HPP
 #define Doom_DoomEngine_HPP
 
-#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
-#include "Doom/DoomConfig/FppConstantsAc.hpp"
+#include <Os/File.hpp>
 #include <Os/Mutex.hpp>
 #include <Os/RawTime.hpp>
+#include "Doom/DoomConfig/FppConstantsAc.hpp"
+#include "Doom/DoomEngine/DoomEngineComponentAc.hpp"
+#include "Doom/InitStatusEnumAc.hpp"
+#include "Doom/KeyQueueStatusEnumAc.hpp"
+#include "Doom/RequestStatusEnumAc.hpp"
+#include "Doom/WadStatusEnumAc.hpp"
 
 #include <atomic>
+#include <csetjmp>
 
 namespace Doom {
 
@@ -41,11 +42,13 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Maximum number of pending key events queued for the DOOM engine.
     static constexpr FwSizeType KEY_QUEUE_CAPACITY = 64;
 
-    //! Width of the DOOM frame in pixels.
-    static constexpr U16 FRAME_WIDTH = 640;
+    //! Width of the DOOM frame in pixels (DoomConfig.fpp; checked
+    //! against DOOMGENERIC_RESX at compile time).
+    static constexpr U16 FRAME_WIDTH = static_cast<U16>(Doom::FRAME_WIDTH);
 
-    //! Height of the DOOM frame in scanlines.
-    static constexpr U16 FRAME_HEIGHT = 400;
+    //! Height of the DOOM frame in scanlines (DoomConfig.fpp; checked
+    //! against DOOMGENERIC_RESY at compile time).
+    static constexpr U16 FRAME_HEIGHT = static_cast<U16>(Doom::FRAME_HEIGHT);
 
     //! Total bytes in one palette-indexed DOOM frame.
     static constexpr U32 FRAME_BYTES = static_cast<U32>(FRAME_WIDTH) * static_cast<U32>(FRAME_HEIGHT);
@@ -53,17 +56,14 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! Maximum length of the IWAD path that may be supplied to the engine.
     static constexpr FwSizeType WAD_PATH_MAX = 256;
 
+    //! Maximum length of an engine fault message (matches EngineFault).
+    static constexpr FwSizeType FAULT_MESSAGE_MAX = 128;
+
     //! Capacity (in frames) of the screen-wipe melt playback buffer,
     //! configured in DoomConfig.fpp. Each slot costs FRAME_BYTES of
     //! static footprint; overflowing frames are dropped and counted in
     //! FramesDropped (the wipe then cuts to the live frame early).
     static constexpr FwSizeType MELT_QUEUE_CAPACITY = Doom::MELT_QUEUE_CAPACITY;
-
-    //! Microseconds slept per forceStart rendezvous poll.
-    static constexpr U32 RENDEZVOUS_DELAY_USEC = 1000;
-
-    //! Max rendezvous polls: x RENDEZVOUS_DELAY_USEC = ~1 s bound.
-    static constexpr U32 RENDEZVOUS_MAX_SPINS = 1000;
 
     //! Number of RGB entries in the DOOM palette.
     static constexpr FwSizeType PALETTE_ENTRIES = Doom::PALETTE_BYTES / 3;
@@ -72,11 +72,32 @@ class DoomEngine final : public DoomEngineComponentBase {
     explicit DoomEngine(const char* compName);
     ~DoomEngine() override;
 
-    //! Set the path to the IWAD that should be passed to
-    //! doomgeneric_Create when the engine starts. Must be called before
-    //! the Start command is dispatched. Asserts if the path does not
-    //! fit in WAD_PATH_MAX (rejects rather than truncates).
-    void setWadPath(const char* wadPath);
+    //! Set the path to the IWAD passed to doomgeneric_Create. Must be
+    //! called before initEngine. A path that does not fit WAD_PATH_MAX
+    //! is rejected (WadPathRejected event, path left unset) rather than
+    //! truncated.
+    InitStatus setWadPath(const char* wadPath);
+
+    //! Initialization-time engine bring-up: opens the WAD and runs
+    //! doomgeneric_Create (the engine's one-shot init, including all
+    //! of its heap allocation). Call once from topology setup, before
+    //! the rate groups start; never from the rate-group thread. Any
+    //! result other than OK (WadUnavailable / WadInvalid / EngineFault
+    //! event, State FAILED) means Start will be rejected.
+    InitStatus initEngine();
+
+    //! Terminal engine fault, entered from the engine's I_Error/I_Quit
+    //! via the extern "C" glue. Records the fault (EngineFault event,
+    //! State FAILED, engine stopped) and longjmps out of the
+    //! doomgeneric_Create / doomgeneric_Tick call that was in progress.
+    //! Asserts if no engine call is in progress. Does not return.
+    //!
+    //! Fault-containment invariants (see the longjmp discussion in
+    //! DoomEngine.cpp): the jump unwinds only C frames of the engine
+    //! plus the trampoline; no C++ object with a destructor may be
+    //! live between the setjmp and this call, no lock may be held, and
+    //! the engine is never re-entered after a fault (FAILED is terminal).
+    [[noreturn]] void engineFault(const char* message);
 
     //! Accessor used by the extern "C" DG_* platform glue to reach back
     //! into the component instance. There is exactly one Doom
@@ -108,21 +129,23 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 platformGetTicksMs();
 
     //! Called from DG_GetKey to drain the next queued key event. Returns
-    //! true if an event was returned, false otherwise. Non-blocking.
+    //! true if an event was returned, false if the queue is empty or a
+    //! tic barrier was consumed. Non-blocking.
     bool platformGetKey(bool& pressed, U8& code);
 
     //! Called from DG_SetWindowTitle. The deployment has no real window
     //! so the title is intentionally ignored.
     void platformSetTitle(const char* title);
 
-    //! Programmatic engine bring-up. Identical to the Start command
+    //! Programmatic engine start. Identical to the Start command
     //! except no cmdResponse is emitted. Intended for the autoStart
     //! path in Main.cpp where the binary is launched headless without
-    //! a GDS to dispatch the Start command. Safe to call while the
-    //! rate groups are running: it rendezvouses with any in-flight
-    //! schedIn tick before touching engine state. Returns true on
-    //! success.
-    bool forceStart();
+    //! a GDS to dispatch the Start command. Validates (engine created,
+    //! not faulted, not running), publishes STARTING and latches the
+    //! request; the rate-group thread performs the start on its next
+    //! schedIn tick (EngineStarted, RUNNING). Never blocks. Any result
+    //! other than ACCEPTED was reported via StartRejected.
+    RequestStatus forceStart();
 
   private:
     // ------------------------------------------------------------------
@@ -152,26 +175,56 @@ class DoomEngine final : public DoomEngineComponentBase {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    //! Enqueue one (pressed, code) key event under m_keyMutex. Returns
-    //! true on success, false if the queue was full.
-    bool enqueueKey(bool pressed, U8 code);
+    //! Allow-list check for raw key codes: only DoomKey enumerators
+    //! reach the engine. Returns QUEUED when allowed.
+    static KeyQueueStatus validateKeyCode(U8 code);
 
-    //! Enqueue a down+up pair atomically: both events are queued or
-    //! neither is, so an overflow cannot leave a key stuck down.
-    bool enqueueKeyTap(U8 code);
+    //! Validate a raw code, then enqueueKey; emits KeyRejected on failure.
+    KeyQueueStatus enqueueRawKey(bool pressed, U8 code);
+
+    //! Enqueue one (pressed, code) key event under m_keyMutex.
+    KeyQueueStatus enqueueKey(bool pressed, U8 code);
+
+    //! Enqueue down, tic barrier, up atomically: all three entries are
+    //! queued or none is, so an overflow cannot leave a key stuck down.
+    KeyQueueStatus enqueueKeyTap(U8 code);
 
     //! Shared enqueue core: queues all entries or none, updating the
     //! rate-window counters and overflow reporting under m_keyMutex.
-    bool enqueueKeyEvents(const U16* entries, FwSizeType count);
+    KeyQueueStatus enqueueKeyEvents(const U16* entries, FwSizeType count);
+
+    //! Map a key-queue status onto the command response for the key commands.
+    static Fw::CmdResponse keyResponse(KeyQueueStatus status);
 
     //! Record and emit the State telemetry channel.
     void publishState(EngineState state);
+
+    //! State/telemetry half of engineFault (no longjmp).
+    void recordEngineFault(const char* message);
+
+    //! Structural check of an opened IWAD (magic, directory bounds,
+    //! required lumps) so malformed files are rejected before the
+    //! engine can reach an I_Error on them. Returns VALID or the
+    //! check that failed.
+    WadStatus validateWad(Os::File& wad);
+
+    //! Shared Start/Reset precondition: the engine must have been
+    //! created and not have faulted. Caller holds m_startMutex.
+    RequestStatus engineAvailable() const;
+
+    //! Rate-group thread: consume a latched Start - rebase the engine
+    //! clock, discard melt/draw state, set m_engineRunning, publish.
+    void applyStart();
 
     //! Pack one key event into the queue's wire format: bit 8 is the
     //! pressed flag, bits 0-7 the key code (unpacked by platformGetKey).
     static constexpr U16 packKeyEntry(bool pressed, U8 code) {
         return static_cast<U16>((pressed ? (1U << 8) : 0U) | static_cast<U16>(code));
     }
+
+    //! Queue marker that ends the current tic's DG_GetKey drain, so the
+    //! entries after it are only seen by the engine on the next tic.
+    static constexpr U16 KEY_ENTRY_TIC_BARRIER = static_cast<U16>(1U << 9);
 
     //! Send one full frame out the frameOut port (after the palette on
     //! paletteOut). src holds FRAME_BYTES of 8-bit palette indices; it
@@ -205,27 +258,35 @@ class DoomEngine final : public DoomEngineComponentBase {
     //! RUNNING, which it self-heals to OFF.
     std::atomic<EngineState::T> m_lastState;
 
-    //! True while the engine is being driven by the rate group.
-    //! All loads/stores are seq_cst so the handoff with
-    //! m_tickInProgress shares one total order (see forceStart).
+    //! True while the engine is being driven by the rate group. Set
+    //! only by applyStart (rate-group thread); cleared by Stop/fault.
     std::atomic<bool> m_engineRunning;
 
-    //! True while schedIn_handler is executing. Set before the handler
-    //! reads m_engineRunning; forceStart waits for it to clear before
-    //! mutating engine state (see the rendezvous in forceStart).
-    std::atomic<bool> m_tickInProgress;
+    //! Set by forceStart after validation; consumed by the rate-group
+    //! thread at the top of its next tick (applyStart). Cleared by Stop.
+    std::atomic<bool> m_startRequested;
 
     //! True once doomgeneric_Create has run. The upstream engine's
     //! initialisation is one-shot, so Create is never invoked twice.
     bool m_engineCreated;
+
+    //! True once the engine has faulted (I_Error/I_Quit). Terminal:
+    //! engine state is unrecoverable, so Start is rejected thereafter.
+    std::atomic<bool> m_engineFaulted;
+
+    //! Fault return point around doomgeneric_Create / doomgeneric_Tick,
+    //! valid while m_faultJmpArmed. Only C frames lie between the
+    //! setjmp and engineFault's longjmp.
+    std::jmp_buf m_faultJmp;
+    bool m_faultJmpArmed;
 
     //! Set by Reset_cmdHandler; consumed by the rate-group thread at
     //! the top of its next running tick, which flushes input state
     //! and returns the game to the title sequence.
     std::atomic<bool> m_resetRequested;
 
-    //! Serializes concurrent forceStart callers (autoStart thread vs
-    //! a ground Start command).
+    //! Serializes forceStart/Stop/Reset callers (autoStart thread vs
+    //! ground commands) so their checks see a consistent picture.
     Os::Mutex m_startMutex;
 
     //! Engine start reference time for DG_GetTicksMs.
@@ -277,9 +338,8 @@ class DoomEngine final : public DoomEngineComponentBase {
     U32 m_frameBytesThisWindow;
 
     // ------------------------------------------------------------------
-    // Engine clock and melt-playback state (rate-group thread; reset
-    // by forceStart on the caller's thread during the start/stop
-    // handoff, after the m_tickInProgress rendezvous).
+    // Engine clock and melt-playback state (rate-group thread only;
+    // reset by applyStart when a latched Start is consumed).
     // ------------------------------------------------------------------
 
     //! Virtual milliseconds accumulated by platformSleepMs; added to

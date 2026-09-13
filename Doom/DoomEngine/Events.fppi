@@ -2,10 +2,9 @@
 # Doom component events
 # ----------------------------------------------------------------------
 
-@ Engine started successfully: on the first Start doomgeneric_Create
-@ has returned; on a Start after a Stop the existing engine resumes.
-@ The rate-group thread begins driving doomgeneric_Tick on the next
-@ schedIn pulse.
+@ Engine started: the rate-group thread consumed a latched Start and
+@ is now driving doomgeneric_Tick (State RUNNING). A Start after a
+@ Stop resumes the existing engine.
 event EngineStarted() \
   severity activity high \
   id 0 \
@@ -24,31 +23,46 @@ event KeyQueueOverflow() \
   id 2 \
   format "DOOM key queue overflow - input dropped"
 
-@ A Start command was issued while the engine was already running.
-event AlreadyRunning() \
+@ A raw key code (RawKey command or rawKeyIn port) is not one of the
+@ DoomKey enumerators and was not passed to the engine. The allow-list
+@ keeps save/quit shortcuts and untested engine bindings unreachable.
+event KeyRejected(
+                   code: U8 @< The rejected raw key code
+                   reason: Doom.KeyQueueStatus @< Which check failed
+                 ) \
   severity warning low \
-  id 3 \
-  format "Start ignored - engine already running"
+  id 11 \
+  format "Key code {} rejected - {}" \
+  throttle 5
 
-@ A Start command could not rendezvous with the rate-group thread:
-@ a previous tick was still in flight after the bounded wait, or the
-@ wait itself failed.
-event StartBusy() \
-  severity warning low \
-  id 4 \
-  format "Start rejected - could not rendezvous with the rate group"
+@ The WAD path handed to setWadPath does not fit WAD_PATH_MAX; the
+@ path is left unset, so initEngine reports WAD_UNAVAILABLE.
+event WadPathRejected(
+                       length: U32 @< Length of the offending path
+                       reason: Doom.InitStatus @< Which check failed
+                     ) \
+  severity warning high \
+  id 12 \
+  format "WAD path of {} characters rejected - {}"
+
+@ A Start request was rejected; reason names the failed precondition
+@ (ALREADY_RUNNING, START_PENDING, NOT_INITIALIZED, FAULTED).
+event StartRejected(
+                     reason: Doom.RequestStatus @< Which precondition failed
+                   ) \
+  severity warning high \
+  id 3 \
+  format "Start rejected - {}"
 
 @ No WAD path was configured, or the configured WAD could not be
-@ opened. Start is rejected so these cases cannot take down the whole
-@ flight process via the engine's internal error handler. The check is
-@ advisory: a WAD that opens but is malformed, or is removed after the
-@ check, can still reach the upstream error handler.
+@ opened at initialization. The engine is not created and Start is
+@ rejected with StartRejected(NOT_INITIALIZED).
 event WadUnavailable(
                       wadPath: string size 256 @< The WAD path that failed to open
                     ) \
   severity warning high \
   id 5 \
-  format "Start rejected - cannot open WAD file {}"
+  format "Engine init rejected - cannot open WAD file {}"
 
 @ The game was reset back to its initial (title screen) state in
 @ response to a Reset command.
@@ -57,9 +71,34 @@ event EngineReset() \
   id 6 \
   format "DOOM engine reset to initial state"
 
-@ A Reset command was issued before the engine was ever started;
-@ there is no game state to reset.
-event ResetNotStarted() \
+@ A Reset request was rejected; reason names the failed precondition
+@ (NOT_INITIALIZED, FAULTED). There is no game state to reset.
+event ResetRejected(
+                     reason: Doom.RequestStatus @< Which precondition failed
+                   ) \
   severity warning low \
   id 7 \
-  format "Reset ignored - engine has never been started"
+  format "Reset rejected - {}"
+
+@ The configured WAD opened but failed structural validation (IWAD
+@ magic, directory bounds, required lumps). The engine is not created
+@ and Start is rejected with StartRejected(NOT_INITIALIZED).
+event WadInvalid(
+                  wadPath: string size 256 @< The WAD path that failed validation
+                  reason: Doom.WadStatus @< Which check failed
+                ) \
+  severity warning high \
+  id 10 \
+  format "Engine init rejected - WAD file {} invalid: {}"
+
+@ The engine raised an internal fatal error (I_Error) or requested to
+@ quit (I_Quit; unreachable from the DoomKey allow-list, which omits
+@ the 'y' confirm). The engine is stopped and permanently unavailable;
+@ State is FAILED (no in-process recovery: the engine's globals are
+@ left as-is). Replaces the upstream handler's process exit().
+event EngineFault(
+                   message: string size 128 @< The engine's error message
+                 ) \
+  severity warning high \
+  id 9 \
+  format "DOOM engine fault: {}"

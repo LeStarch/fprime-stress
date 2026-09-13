@@ -164,11 +164,13 @@ the system is meant to be exercised in flight*. This one does:
 
 4. **Bounded memory**. Every cross-thread buffer is a fixed-size
    member of `DoomEngine`. The component's `BufferManager` pool is
-   sized at init time. The only runtime `malloc` lives inside
-   doomgeneric's own zone allocator and is performed exactly once
-   on `Start` — i.e. allocate-at-init followed by zero-malloc
+   sized at init time. The only `malloc` lives inside doomgeneric's
+   own zone allocator and is performed exactly once, at topology
+   setup (`initEngine`) — allocate-at-init followed by zero-malloc
    steady state, which is the discipline most JPL fault-tolerant
-   missions impose on flight code.
+   missions impose on flight code. The engine's `I_Error`/`I_Quit`
+   process-exit path is intercepted and reported as an `EngineFault`
+   event (State `FAILED`) instead.
 
 5. **Measurable**. Four telemetry channels report the resulting
    workload back to the ground every second:

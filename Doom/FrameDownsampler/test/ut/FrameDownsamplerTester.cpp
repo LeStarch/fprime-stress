@@ -97,7 +97,8 @@ void FrameDownsamplerTester::testRejectsIndivisibleDimensions() {
     this->sendFrame(1U, 33U, 33U, FRAME_BYTES);
     ASSERT_EQ(m_outCount, 0u);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
-    ASSERT_EVENTS_InvalidFrame(0, 33U, 33U, static_cast<U8>(Doom::DOWNSAMPLE_FACTOR));
+    ASSERT_EVENTS_InvalidFrame(0, 33U, 33U, static_cast<U8>(Doom::DOWNSAMPLE_FACTOR),
+                               Doom::FrameRejectReason::BAD_WIDTH);
 }
 
 void FrameDownsamplerTester::testRejectsShortBuffer() {
@@ -105,6 +106,8 @@ void FrameDownsamplerTester::testRejectsShortBuffer() {
     this->sendFrame(1U, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, FRAME_BYTES - 1U);
     ASSERT_EQ(m_outCount, 0u);
     ASSERT_EVENTS_InvalidFrame_SIZE(1);
+    ASSERT_EVENTS_InvalidFrame(0, Doom::FRAME_WIDTH, Doom::FRAME_HEIGHT, static_cast<U8>(Doom::DOWNSAMPLE_FACTOR),
+                               Doom::FrameRejectReason::SHORT_BUFFER);
 }
 
 }  // namespace Doom

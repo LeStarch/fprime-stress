@@ -3,24 +3,22 @@
 # ----------------------------------------------------------------------
 
 # Commands are sync because the component is passive (no worker
-# thread) and run on the command-dispatch thread. Key handlers are a
-# short mutex-guarded enqueue; Start runs engine bring-up inline, may
-# first wait (bounded, ~1 s) for an in-flight rate-group tick, and if
-# another Start/Stop is in flight blocks until it completes (worst
-# case: a full first-Start engine bring-up).
+# thread) and run on the command-dispatch thread. No handler blocks
+# beyond a short mutex hold: key handlers enqueue, Start/Reset latch a
+# request that the rate-group thread applies on its next tick.
 
-@ Start the wrapped DOOM engine. The first Start calls
-@ doomgeneric_Create, which loads the WAD and runs DOOM's
-@ initialisation through to the first idle tick; a Start after a Stop
-@ resumes the existing engine. After this command completes, the
-@ rate-group thread (via the schedIn port) drives doomgeneric_Tick.
-@ Responds EXECUTION_ERROR if the engine is already running, the
-@ rendezvous times out (StartBusy), or the WAD cannot be opened
-@ (WadUnavailable).
+@ Request that the rate-group thread start driving the DOOM engine
+@ created by initEngine at topology setup. Responds OK once the request
+@ is accepted (State STARTING); the next schedIn tick performs the
+@ start (EngineStarted, State RUNNING). A Start after a Stop resumes
+@ the existing engine. Responds EXECUTION_ERROR and emits
+@ StartRejected naming the failed precondition (ALREADY_RUNNING,
+@ START_PENDING, NOT_INITIALIZED, FAULTED).
 sync command Start \
   opcode 0
 
-@ Press and release a named DOOM key in a single tick. Useful for menu
+@ Press a named DOOM key on one engine tic and release it on the next,
+@ so gameplay keys (FIRE, USE, WEAPONn) register. Useful for menu
 @ navigation, weapon select, and one-shot inputs from command sequences.
 sync command KeyTap(
                      key: Doom.DoomKey
@@ -43,9 +41,9 @@ sync command KeyUp(
                   ) \
   opcode 3
 
-@ Press or release a raw DOOM key code, bypassing the named enum.
-@ Intended for ground tooling or sequences that need arbitrary keys
-@ (numeric digits, characters, etc.) without growing the enum.
+@ Press or release a DOOM key given by its raw code, for ground tooling
+@ that works in doomkeys.h values. The code must still be a DoomKey
+@ enumerator; anything else is rejected with KeyRejected.
 sync command RawKey(
                      pressed: bool
                      code: U8
@@ -66,7 +64,8 @@ sync command Stop \
 @ machinery. The engine itself is not torn down (the upstream engine
 @ has no clean shutdown path). A Reset while the engine is created
 @ but stopped responds OK and latches the request; it is applied on
-@ the first tick after the next Start. Responds EXECUTION_ERROR if
-@ the engine has never been started.
+@ the first tick after the next Start. Responds EXECUTION_ERROR and
+@ emits ResetRejected (NOT_INITIALIZED, FAULTED) if there is no
+@ engine to reset.
 sync command Reset \
   opcode 6

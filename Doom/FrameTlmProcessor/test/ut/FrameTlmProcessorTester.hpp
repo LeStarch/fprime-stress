@@ -34,6 +34,12 @@ class FrameTlmProcessorTester final : public FrameTlmProcessorGTestBase {
     void connectPorts();
     void initComponents();
 
+    //! Assert one emitted row's metadata and pixel slice.
+    void checkRow(const Doom::FrameRow& row, U32 frameNumber, U16 rowIndex, U16 width);
+
+    //! History entry of the last emitted row for the given height.
+    const Doom::FrameRow& lastRow(U16 height);
+
     //! Invoke frameIn with a position-dependent pattern.
     void sendFrame(U32 frameNumber, U16 width, U16 height, U32 bufferSize);
 

@@ -41,10 +41,60 @@ module Doom {
 
   enum EngineState {
     OFF       = 0  @< Engine not running: never started, or stopped (resumable).
-    STARTING  = 1  @< Engine bring-up is running in the Start handler.
+    STARTING  = 1  @< Start accepted; the rate group applies it on its next tick.
     RUNNING   = 2  @< Engine is ticking and producing frames.
     FAILED    = 3  @< Engine failed to start (e.g. WAD unavailable).
   } default OFF
+
+  @ Result of the structural IWAD check run by initEngine before the
+  @ engine is created. Every failure names the check that rejected it.
+  enum WadStatus {
+    VALID                   = 0  @< Header, directory and required lumps all check out.
+    SIZE_UNKNOWN            = 1  @< The file size could not be determined.
+    SHORT_HEADER            = 2  @< Fewer than 12 header bytes.
+    NOT_IWAD                = 3  @< Magic is not "IWAD".
+    LUMP_COUNT_OUT_OF_RANGE = 4  @< numlumps is zero or above the bound.
+    DIRECTORY_OUTSIDE_FILE  = 5  @< Directory offset/extent exceeds the file.
+    DIRECTORY_SEEK_FAILED   = 6  @< Seeking to the directory failed.
+    SHORT_DIRECTORY         = 7  @< Directory read returned fewer bytes than declared.
+    LUMP_OUTSIDE_FILE       = 8  @< A lump's filepos + size exceeds the file.
+    REQUIRED_LUMP_MISSING   = 9  @< PLAYPAL, COLORMAP, PNAMES or TEXTURE1 absent.
+    READ_FAILED             = 10 @< A seek or read returned an I/O error.
+  } default VALID
+
+  @ Outcome of initEngine (topology-time engine creation).
+  enum InitStatus {
+    OK              = 0  @< Engine created; Start is now accepted.
+    WAD_UNAVAILABLE = 1  @< No WAD path configured or the file could not be opened.
+    WAD_INVALID     = 2  @< The WAD failed structural validation (see WadStatus).
+    ENGINE_FAULT    = 3  @< doomgeneric_Create raised I_Error/I_Quit.
+    WAD_PATH_TOO_LONG = 4  @< The configured WAD path does not fit WAD_PATH_MAX.
+  } default OK
+
+  @ Outcome of a Start or Reset request; the rejections name the
+  @ precondition that failed.
+  enum RequestStatus {
+    ACCEPTED        = 0  @< Request latched for the rate-group thread.
+    ALREADY_RUNNING = 1  @< Engine is already being ticked.
+    START_PENDING   = 2  @< A previous Start has not yet been applied.
+    NOT_INITIALIZED = 3  @< initEngine did not succeed.
+    FAULTED         = 4  @< The engine has faulted; FAILED is terminal.
+  } default ACCEPTED
+
+  @ Outcome of queuing key input for the engine.
+  enum KeyQueueStatus {
+    QUEUED           = 0  @< All entries of the event were queued.
+    QUEUE_FULL       = 1  @< No entry was queued; input dropped and counted.
+    CODE_NOT_ALLOWED = 2  @< Key code is not a DoomKey enumerator; nothing queued.
+  } default QUEUED
+
+  @ Why an incoming raw frame was dropped instead of processed.
+  enum FrameRejectReason {
+    BAD_WIDTH    = 0  @< Width does not match / divide by the configured value.
+    BAD_HEIGHT   = 1  @< Height does not match / divide by the configured value.
+    NULL_BUFFER  = 2  @< Pixel buffer has no data pointer.
+    SHORT_BUFFER = 3  @< Pixel buffer holds fewer than width * height bytes.
+  } default BAD_WIDTH
 
   # ----------------------------------------------------------------------
   # Ground-facing key enumeration
@@ -67,8 +117,8 @@ module Doom {
     ENTER       = 0x0D  @< Menu confirm (KEY_ENTER).
     TAB         = 0x09  @< Automap (KEY_TAB).
     SHIFT       = 0xB6  @< Run modifier (KEY_RSHIFT).
-    Y           = 0x79  @< Confirmation 'y'.
-    N           = 0x6E  @< Confirmation 'n'.
+    @ 'y' is deliberately absent: it confirms Quit Game / End Game, which faults the engine.
+    N           = 0x6E  @< Decline a menu prompt ('n').
     WEAPON1     = 0x31  @< Select weapon 1 ('1').
     WEAPON2     = 0x32  @< Select weapon 2 ('2').
     WEAPON3     = 0x33  @< Select weapon 3 ('3').
@@ -96,8 +146,8 @@ module Doom {
                  key: Doom.DoomKey
                )
 
-  @ Raw key event. Used by the rawKeyIn parallel input port for
-  @ arbitrary key codes not covered by the named enum.
+  @ Raw key event. Used by the rawKeyIn parallel input port; the code
+  @ must be a DoomKey enumerator or it is rejected (KeyRejected).
   port RawKeyEvent(
                     pressed: bool
                     code: U8

@@ -8,6 +8,20 @@
 
 namespace Doom {
 
+static_assert(FrameTlmProcessor::MAX_ROWS == 400,
+              "kRowWriters and FrameTlmProcessorTelemetry.fppi enumerate "
+              "exactly 400 rows");
+static_assert(FrameTlmProcessor::ROW_HEIGHT <= FrameTlmProcessor::MAX_ROWS,
+              "DOWNSAMPLED_HEIGHT must not exceed the FrameRow channel count");
+// tlmWrite asserts if a channel value overflows Fw::TlmBuffer; deployments
+// must raise FW_COM_BUFFER_MAX_SIZE (the reference uses 1024).
+static_assert(static_cast<FwSizeType>(Doom::Palette::SERIALIZED_SIZE) <=
+                  static_cast<FwSizeType>(FW_TLM_BUFFER_MAX_SIZE),
+              "FW_COM_BUFFER_MAX_SIZE too small for the PaletteOut channel");
+static_assert(static_cast<FwSizeType>(Doom::FrameRow::SERIALIZED_SIZE) <=
+                  static_cast<FwSizeType>(FW_TLM_BUFFER_MAX_SIZE),
+              "FW_COM_BUFFER_MAX_SIZE too small for a FrameRow channel");
+
 // Row-index -> channel-writer dispatch table (see header comment).
 const FrameTlmProcessor::RowWriter FrameTlmProcessor::kRowWriters[FrameTlmProcessor::MAX_ROWS] = {
     &FrameTlmProcessor::tlmWrite_FrameRow000, &FrameTlmProcessor::tlmWrite_FrameRow001,
@@ -224,23 +238,38 @@ void FrameTlmProcessor::frameIn_handler(FwIndexType portNum,
     // Validate rather than assert: dimensions arrive over a port and a
     // misbehaving upstream must not take the deployment down. Dimensions
     // must match the compile-time downsample configuration exactly.
-    const U32 frameBytes = static_cast<U32>(width) * static_cast<U32>(height);
-    if ((width != ROW_WIDTH) || (height != ROW_HEIGHT) || (pixels.getData() == nullptr) ||
-        (pixels.getSize() < frameBytes)) {
-        this->log_WARNING_LO_InvalidFrame(width, height);
+    const FwSizeType frameBytes = static_cast<FwSizeType>(width) * static_cast<FwSizeType>(height);
+    if (width != ROW_WIDTH) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::BAD_WIDTH);
         return;
     }
+    if (height != ROW_HEIGHT) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::BAD_HEIGHT);
+        return;
+    }
+    if (pixels.getData() == nullptr) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::NULL_BUFFER);
+        return;
+    }
+    if (pixels.getSize() < frameBytes) {
+        this->log_WARNING_LO_InvalidFrame(width, height, FrameRejectReason::SHORT_BUFFER);
+        return;
+    }
+    // A good frame re-arms the throttle so intermittent faults keep reporting.
+    this->log_WARNING_LO_InvalidFrame_ThrottleClear();
 
     const U8* const src = pixels.getData();
     m_row.set_frame(frameNumber);
     m_row.set_width(width);
     U8* const rowPixels = m_row.get_pixels();
 
-    // One channel per scanline, emitted only to the incoming height.
+    // One channel per scanline; one timestamp per frame so rows
+    // reassemble on the ground and the time port is hit once, not per row.
+    const Fw::Time now = this->getTime();
     for (U16 r = 0; r < height; r++) {
         (void)::memcpy(rowPixels, &src[static_cast<U32>(r) * static_cast<U32>(width)], width);
         m_row.set_row(r);
-        (this->*kRowWriters[r])(m_row, Fw::Time());
+        (this->*kRowWriters[r])(m_row, now);
     }
 }
 

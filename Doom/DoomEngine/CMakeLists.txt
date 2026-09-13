@@ -110,7 +110,7 @@ target_include_directories(fprime_stress_doomgeneric
 )
 # Upstream DOOM uses CMAP256 to render a palette-indexed 8-bit frame.
 # We use doomgeneric's native 640x400 resolution to make this a useful
-# stress test - 256 kB / frame * 30 fps = 7.5 MB/s sustained downlink.
+# stress test - 256 kB / frame * 35 Hz = 9.0 MB/s raw before downsampling.
 target_compile_definitions(fprime_stress_doomgeneric
     PUBLIC
         CMAP256
@@ -130,6 +130,15 @@ target_compile_options(fprime_stress_doomgeneric
     PRIVATE
         -w
         -O2
+)
+# Upstream I_Error/I_Quit exit() the process. Rename their definitions
+# in i_system.c so every other engine TU links against the component's
+# fault trampoline in DoomEngine.cpp instead (source stays untouched).
+# Calls made inside i_system.c still reach the renamed bodies, so exit()
+# itself is also redirected into the trampoline for that TU.
+set_source_files_properties("${DOOMGENERIC_DIR}/i_system.c"
+    PROPERTIES COMPILE_DEFINITIONS
+        "I_Error=doomgeneric_upstream_I_Error;I_Quit=doomgeneric_upstream_I_Quit;exit=fprime_doom_upstream_exit"
 )
 
 # ----------------------------------------------------------------------

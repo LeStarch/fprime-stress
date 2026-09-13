@@ -79,16 +79,34 @@ TEST(OffNominal, MeltOverflowCountsDroppedFrames) {
     tester->testMeltOverflowCountsDroppedFrames();
 }
 
-TEST(OffNominal, ForceStartBusyRendezvousTimesOut) {
+TEST(OffNominal, StopCancelsPendingStart) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
-    tester->testForceStartBusyRendezvousTimesOut();
+    tester->testStopCancelsPendingStart();
 }
 
 TEST(Nominal, StartRejectsMissingWad) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
     tester->testStartRejectsMissingWad();
+}
+
+TEST(OffNominal, InitRejectsMalformedWad) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testInitRejectsMalformedWad();
+}
+
+TEST(Nominal, RawKeyRejectsUnlistedCode) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testRawKeyRejectsUnlistedCode();
+}
+
+TEST(Nominal, SetWadPathRejectsOverlongPath) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testSetWadPathRejectsOverlongPath();
 }
 
 TEST(Nominal, StartRejectsUnconfiguredWad) {
@@ -131,6 +149,38 @@ TEST(OffNominal, ForceStartWhenAlreadyRunning) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
     tester->testForceStartWhenAlreadyRunning();
+}
+
+TEST(OffNominal, StartRejectsWithoutInit) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testStartRejectsWithoutInit();
+}
+
+TEST(OffNominal, EngineFaultStopsEngine) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testEngineFaultStopsEngine();
+}
+
+TEST(OffNominal, EngineFaultUnwindsToArmedCaller) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testEngineFaultUnwindsToArmedCaller();
+}
+
+TEST(OffNominal, KeyRejectedThrottleReArmsOnReset) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testKeyRejectedThrottleReArmsOnReset();
+}
+
+TEST(Nominal, RateTelemetryWindow) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testRateTelemetryWindow();
+}
+
+TEST(Nominal, ValidateWadWalksChunkedDirectory) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testValidateWadWalksChunkedDirectory();
 }
 
 TEST(Nominal, VariableRateContextAdvancesClock) {

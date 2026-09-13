@@ -31,6 +31,8 @@ class DoomEngineTester final : public DoomEngineGTestBase {
 
     void testCommandsEnqueueKeys();
     void testParallelPortsEnqueueKeys();
+    void testRawKeyRejectsUnlistedCode();
+    void testSetWadPathRejectsOverlongPath();
     void testOverflowEmitsEvent();
     void testStopCommandResponds();
     void testResetRejectsBeforeStart();
@@ -42,13 +44,20 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testDrawFrameEmitsFirstDrawAndBuffersMelt();
     void testSchedInPlaysBackMeltFrames();
     void testMeltOverflowCountsDroppedFrames();
-    void testForceStartBusyRendezvousTimesOut();
+    void testStopCancelsPendingStart();
     void testForceStartWhenAlreadyRunning();
     void testForceStartResumesAfterStop();
     void testStopWhileRunning();
     void testKeyTapAllOrNothing();
     void testStartRejectsMissingWad();
+    void testInitRejectsMalformedWad();
     void testStartRejectsUnconfiguredWad();
+    void testStartRejectsWithoutInit();
+    void testEngineFaultStopsEngine();
+    void testEngineFaultUnwindsToArmedCaller();
+    void testKeyRejectedThrottleReArmsOnReset();
+    void testRateTelemetryWindow();
+    void testValidateWadWalksChunkedDirectory();
     void testStartCommandRejectsWhenRunning();
     void testHeartbeatSelfHealsStaleRunning();
 
@@ -67,6 +76,12 @@ class DoomEngineTester final : public DoomEngineGTestBase {
                                Fw::Buffer& pixels) override;
 
     FwSizeType drainKeys(bool* pressedOut, U8* codeOut, FwSizeType maxEvents);
+
+    //! Write a WAD fixture to disk for the validateWad tests.
+    void writeFixtureWad(const char* path, const U8* bytes, FwSizeType size);
+
+    //! initEngine on `path` must fail with WadInvalid(path, reason).
+    void expectWadInvalid(const char* path, Doom::WadStatus::T reason);
 
     DoomEngine component;
 
