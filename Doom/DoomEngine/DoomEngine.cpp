@@ -38,6 +38,8 @@ extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/d_main.h"
 // i_video.h declares the engine's active palette (struct color colors[256]).
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/i_video.h"
+// i_system.c is compiled with exit renamed to this (see CMakeLists.txt).
+[[noreturn]] void fprime_doom_upstream_exit(int status);
 }  // extern "C"
 
 static_assert(Doom::DoomEngine::FRAME_WIDTH == DOOMGENERIC_RESX, "Doom.FRAME_WIDTH must equal DOOMGENERIC_RESX");
@@ -124,11 +126,17 @@ InitStatus DoomEngine::setWadPath(const char* wadPath) {
 
 void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
     if (!m_engineRunning.load()) {
-        if (m_startRequested.exchange(false)) {
-            // Start latched by forceStart (already validated there):
-            // bring the engine up on this thread, then run the tick.
-            this->applyStart();
-        } else {
+        // Consume the latch under m_startMutex so a Stop cannot land
+        // between the exchange and applyStart and be overwritten.
+        bool started = false;
+        {
+            Os::ScopeLock startLock(m_startMutex);
+            if (m_startRequested.exchange(false)) {
+                this->applyStart();
+                started = true;
+            }
+        }
+        if (!started) {
             // Engine not running - re-publish the last state (OFF or
             // FAILED) rather than clobbering it with OFF. Self-heal a
             // stale RUNNING left by a tick that raced a Stop.
@@ -174,7 +182,15 @@ void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
         m_keyMutex.unLock();
         m_meltHead = 0U;
         m_meltCount = 0U;
-        D_StartTitle();
+        // Engine entry: armed like Tick so an I_Error here is contained.
+        if (setjmp(m_faultJmp) == 0) {
+            m_faultJmpArmed = true;
+            D_StartTitle();
+        }
+        m_faultJmpArmed = false;
+        if (m_engineFaulted.load()) {
+            return;
+        }
         this->log_ACTIVITY_HI_EngineReset();
     } else if (m_meltCount > 0U) {
         // A screen-wipe melt was captured on an earlier tick (see
@@ -464,8 +480,8 @@ RequestStatus DoomEngine::forceStart() {
         this->publishState(EngineState::FAILED);
         return status;
     }
-    // Nothing else is touched here: the rate-group thread owns the
-    // engine state and performs the start in applyStart on its next tick.
+    // Nothing else is touched here: the rate-group thread performs the
+    // start in applyStart on its next tick, under this same mutex.
     this->publishState(EngineState::STARTING);
     m_startRequested.store(true);
     return RequestStatus::ACCEPTED;
@@ -523,7 +539,8 @@ void DoomEngine::Reset_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     }
     // Applied by the rate-group thread at the top of its next running
     // tick; if the engine is stopped the reset is consumed on the
-    // first tick after the next Start.
+    // first tick after the next Start. Reset also re-arms KeyRejected.
+    this->log_WARNING_LO_KeyRejected_ThrottleClear();
     m_resetRequested.store(true);
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
@@ -719,7 +736,7 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
         pal.set_generation(m_paletteGeneration);
         (void)::memcpy(pal.get_rgb(), m_pendingPalette, sizeof(m_pendingPalette));
         this->paletteOut_out(0, pal);
-        m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES) + 16U;
+        m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES);
     }
 
     // Copy into engine-owned storage: the downstream downsampler packs
@@ -729,7 +746,7 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
         (void)::memcpy(m_frameBuffer, src, FRAME_BYTES);
         Fw::Buffer pixels(m_frameBuffer, FRAME_BYTES);
         this->frameOut_out(0, frameNumber, FRAME_WIDTH, FRAME_HEIGHT, pixels);
-        m_frameBytesThisWindow += FRAME_BYTES + 16U;
+        m_frameBytesThisWindow += FRAME_BYTES;
     }
 }
 
@@ -893,6 +910,16 @@ void I_Quit(void) {
     Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
     FW_ASSERT(inst != nullptr);
     inst->engineFault("engine requested quit");
+}
+
+// Replaces exit() inside i_system.c, whose own I_Error/I_Quit bodies are
+// still reached by calls within that file (see CMakeLists.txt).
+void fprime_doom_upstream_exit(int status) {
+    Doom::DoomEngine* const inst = Doom::DoomEngine::getInstance();
+    FW_ASSERT(inst != nullptr);
+    char message[Doom::DoomEngine::FAULT_MESSAGE_MAX];
+    (void)snprintf(message, sizeof(message), "engine exit(%d)", status);
+    inst->engineFault(message);
 }
 
 }  // extern "C"

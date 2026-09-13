@@ -25,20 +25,22 @@ telemetry KeyEventsDropped: U32 id 84
 @ scenarios.
 telemetry FramesDropped: U32 id 85
 
-@ Engine output frame rate in frames per second, measured over a
-@ rolling one-second window updated on schedIn.
+@ Engine output frame rate in frames per second over a tumbling
+@ window: one second of accumulated tick period when schedIn's
+@ context carries the period, else 35 ticks assumed to span 1 s.
+@ Written once when each window closes; holds between windows.
 telemetry FrameRateHz: F32 id 86
 
-@ Engine output data rate in bytes per second sent out the frameOut
-@ and paletteOut ports, measured over the same window.
+@ Payload bytes per second emitted on frameOut and paletteOut
+@ (excludes port/framing overhead), over the same window.
 telemetry FrameDataRateBps: U32 id 87
 
 @ Inbound input data rate in bytes per second received through
-@ key-event commands and parallel input ports. Each key event is
-@ counted as one pressed flag (1 byte) + one code byte = 2 bytes.
+@ key-event commands and parallel input ports, over the same window.
+@ Each key event is counted as pressed flag (1 byte) + code (1 byte).
 telemetry InputDataRateBps: U32 id 88
 
 @ Inbound input command rate in events per second received through
-@ key-event commands and parallel input ports.
+@ key-event commands and parallel input ports, over the same window.
 telemetry InputCommandRateHz: F32 id 89
 

@@ -163,6 +163,26 @@ TEST(OffNominal, EngineFaultStopsEngine) {
     tester->testEngineFaultStopsEngine();
 }
 
+TEST(OffNominal, EngineFaultUnwindsToArmedCaller) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testEngineFaultUnwindsToArmedCaller();
+}
+
+TEST(OffNominal, KeyRejectedThrottleReArmsOnReset) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testKeyRejectedThrottleReArmsOnReset();
+}
+
+TEST(Nominal, RateTelemetryWindow) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testRateTelemetryWindow();
+}
+
+TEST(Nominal, ValidateWadWalksChunkedDirectory) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testValidateWadWalksChunkedDirectory();
+}
+
 TEST(Nominal, VariableRateContextAdvancesClock) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

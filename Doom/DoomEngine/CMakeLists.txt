@@ -134,9 +134,11 @@ target_compile_options(fprime_stress_doomgeneric
 # Upstream I_Error/I_Quit exit() the process. Rename their definitions
 # in i_system.c so every other engine TU links against the component's
 # fault trampoline in DoomEngine.cpp instead (source stays untouched).
+# Calls made inside i_system.c still reach the renamed bodies, so exit()
+# itself is also redirected into the trampoline for that TU.
 set_source_files_properties("${DOOMGENERIC_DIR}/i_system.c"
     PROPERTIES COMPILE_DEFINITIONS
-        "I_Error=doomgeneric_upstream_I_Error;I_Quit=doomgeneric_upstream_I_Quit"
+        "I_Error=doomgeneric_upstream_I_Error;I_Quit=doomgeneric_upstream_I_Quit;exit=fprime_doom_upstream_exit"
 )
 
 # ----------------------------------------------------------------------

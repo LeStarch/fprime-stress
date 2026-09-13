@@ -11,7 +11,13 @@
 
 extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/doomgeneric.h"
+// Component trampolines that replace the upstream process-exit paths.
+void I_Error(char* error, ...);
+void I_Quit(void);
+void fprime_doom_upstream_exit(int status);
 }
+
+#include <csetjmp>
 
 namespace Doom {
 
@@ -171,6 +177,89 @@ void DoomEngineTester::testRawKeyRejectsUnlistedCode() {
     ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RAWKEY, 1, Fw::CmdResponse::OK);
     ASSERT_EQ(this->component.m_keyQueueCount, 1u);
     ASSERT_EVENTS_KeyRejected_SIZE(5);
+}
+
+void DoomEngineTester::testKeyRejectedThrottleReArmsOnReset() {
+    // KeyRejected is throttled at 5: the sixth rejection is silent but
+    // still refused, and an accepted Reset re-arms the event.
+    for (U32 i = 0; i < 6U; i++) {
+        this->invoke_to_rawKeyIn(0, true, static_cast<U8>('y'));
+    }
+    ASSERT_EVENTS_KeyRejected_SIZE(5);
+    ASSERT_EQ(this->component.m_keyQueueCount, 0u);
+
+    this->component.m_engineCreated = true;
+    this->sendCmd_Reset(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RESET, 0, Fw::CmdResponse::OK);
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>('y'));
+    ASSERT_EVENTS_KeyRejected_SIZE(6);
+    ASSERT_EVENTS_KeyRejected(5, static_cast<U8>('y'), Doom::KeyQueueStatus::CODE_NOT_ALLOWED);
+
+    // A rejected Reset does not re-arm.
+    this->component.m_engineCreated = false;
+    this->component.m_resetRequested.store(false);
+    for (U32 i = 0; i < 5U; i++) {
+        this->invoke_to_rawKeyIn(0, true, static_cast<U8>('y'));
+    }
+    ASSERT_EVENTS_KeyRejected_SIZE(10);
+    this->sendCmd_Reset(TEST_INSTANCE_ID, 1);
+    ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RESET, 1, Fw::CmdResponse::EXECUTION_ERROR);
+    this->invoke_to_rawKeyIn(0, true, static_cast<U8>('y'));
+    ASSERT_EVENTS_KeyRejected_SIZE(10);
+}
+
+void DoomEngineTester::testRateTelemetryWindow() {
+    // Rate channels are written once per tumbling window (35 context-0
+    // ticks or 1 s of tick period) from the frame/input accumulators.
+    this->component.m_engineCreated = true;
+    this->component.m_engineRunning.store(true);
+    this->component.m_meltCount = 80U;  // melt playback stands in for Tick
+    this->component.m_framesProduced = 100U;
+    this->component.m_framesThisWindow = 70U;
+    // Each playback tick emits one palette and one frame on top.
+    constexpr U32 PLAYBACK_BYTES = DoomEngine::FRAME_BYTES + static_cast<U32>(Doom::PALETTE_BYTES);
+    for (U32 i = 0; i < 7U; i++) {
+        this->invoke_to_rawKeyIn(0, true, static_cast<U8>(Doom::DoomKey::FIRE));
+    }
+
+    for (U32 i = 0; i < 34U; i++) {
+        this->invoke_to_schedIn(0, 0);
+    }
+    ASSERT_TLM_FrameRateHz_SIZE(0);
+    ASSERT_TLM_FrameCount_SIZE(34);
+    ASSERT_TLM_FrameCount(33, 100U);
+    ASSERT_TLM_KeyEventsDropped_SIZE(34);
+    ASSERT_TLM_KeyEventsDropped(33, 0U);
+
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_TLM_FrameRateHz_SIZE(1);
+    ASSERT_TLM_FrameRateHz(0, 70.0f);
+    ASSERT_TLM_FrameDataRateBps_SIZE(1);
+    ASSERT_TLM_FrameDataRateBps(0, 35U * PLAYBACK_BYTES);
+    ASSERT_TLM_InputCommandRateHz_SIZE(1);
+    ASSERT_TLM_InputCommandRateHz(0, 7.0f);
+    ASSERT_TLM_InputDataRateBps_SIZE(1);
+    ASSERT_TLM_InputDataRateBps(0, 14U);
+    ASSERT_EQ(this->component.m_framesThisWindow, 0U);
+    ASSERT_EQ(this->component.m_inputEventsThisWindow, 0U);
+
+    // Variable-rate mode: 40 ticks of 25 ms close a window at 1.0 s
+    // regardless of the 35-tick count.
+    this->component.m_meltCount = 80U;
+    this->component.m_framesThisWindow = 40U;
+    for (U32 i = 0; i < 39U; i++) {
+        this->invoke_to_schedIn(0, 25000U);
+    }
+    ASSERT_TLM_FrameRateHz_SIZE(1);
+    this->invoke_to_schedIn(0, 25000U);
+    ASSERT_TLM_FrameRateHz_SIZE(2);
+    ASSERT_TLM_FrameRateHz(1, 40.0f);
+    ASSERT_TLM_FrameDataRateBps(1, 40U * PLAYBACK_BYTES);
+    ASSERT_TLM_InputCommandRateHz(1, 0.0f);
+    ASSERT_TLM_InputDataRateBps(1, 0U);
+
+    this->component.m_engineRunning.store(false);
+    this->component.m_engineCreated = false;
 }
 
 void DoomEngineTester::testOverflowEmitsEvent() {
@@ -542,6 +631,15 @@ void DoomEngineTester::testInitRejectsMalformedWad() {
     this->writeFixtureWad(PATH, NOLUMP, sizeof(NOLUMP));
     this->expectWadInvalid(PATH, Doom::WadStatus::REQUIRED_LUMP_MISSING);
 
+    // Lump counts of zero and above the bound are rejected before the
+    // directory is touched.
+    static const U8 ZERO[] = {'I', 'W', 'A', 'D', 0, 0, 0, 0, 12, 0, 0, 0};
+    this->writeFixtureWad(PATH, ZERO, sizeof(ZERO));
+    this->expectWadInvalid(PATH, Doom::WadStatus::LUMP_COUNT_OUT_OF_RANGE);
+    static const U8 HUGE[] = {'I', 'W', 'A', 'D', 0, 0, 1, 0, 12, 0, 0, 0};
+    this->writeFixtureWad(PATH, HUGE, sizeof(HUGE));
+    this->expectWadInvalid(PATH, Doom::WadStatus::LUMP_COUNT_OUT_OF_RANGE);
+
     // Start must be locked out exactly as for a missing WAD.
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
@@ -551,6 +649,49 @@ void DoomEngineTester::testInitRejectsMalformedWad() {
 
     Os::FileSystem::Status removeStatus = Os::FileSystem::removeFile(PATH);
     ASSERT_EQ(removeStatus, Os::FileSystem::OP_OK);
+}
+
+void DoomEngineTester::testValidateWadWalksChunkedDirectory() {
+    // 150 lumps span three 64-entry directory chunks; the required
+    // lumps sit in the last chunk and a bad lump is caught mid-walk.
+    static const char* const PATH = "/tmp/DoomEngineTester_chunked.wad";
+    constexpr U32 LUMPS = 150U;
+    constexpr FwSizeType ENTRY = 16U;
+    static const char* const REQUIRED[] = {"PLAYPAL", "COLORMAP", "PNAMES", "TEXTURE1"};
+    U8 wad[12U + LUMPS * ENTRY] = {};
+    (void)::memcpy(wad, "IWAD", 4);
+    wad[4] = static_cast<U8>(LUMPS);
+    wad[8] = 12U;
+    for (U32 i = 0; i < LUMPS; i++) {
+        U8* const entry = &wad[12U + i * ENTRY];
+        entry[0] = 12U;  // filepos 12, size 0: always inside the file
+        (void)::snprintf(reinterpret_cast<char*>(&entry[8]), 8, "L%06u", i);
+    }
+    for (U32 r = 0; r < 4U; r++) {
+        (void)::memset(&wad[12U + (LUMPS - 4U + r) * ENTRY + 8U], 0, 8);
+        (void)::strncpy(reinterpret_cast<char*>(&wad[12U + (LUMPS - 4U + r) * ENTRY + 8U]), REQUIRED[r], 8);
+    }
+    this->writeFixtureWad(PATH, wad, sizeof(wad));
+    Os::File file;
+    ASSERT_EQ(file.open(PATH, Os::File::OPEN_READ), Os::File::OP_OK);
+    ASSERT_EQ(this->component.validateWad(file), Doom::WadStatus::VALID);
+    file.close();
+
+    // Lump 100 (second chunk) extends past end of file.
+    wad[12U + 100U * ENTRY + 7U] = 0x01;  // size 16 MiB
+    this->writeFixtureWad(PATH, wad, sizeof(wad));
+    ASSERT_EQ(file.open(PATH, Os::File::OPEN_READ), Os::File::OP_OK);
+    ASSERT_EQ(this->component.validateWad(file), Doom::WadStatus::LUMP_OUTSIDE_FILE);
+    file.close();
+
+    // Same directory truncated inside the third chunk: the header
+    // claims 150 lumps but the file holds 140 entries.
+    wad[12U + 100U * ENTRY + 7U] = 0U;
+    this->writeFixtureWad(PATH, wad, 12U + 140U * ENTRY);
+    ASSERT_EQ(file.open(PATH, Os::File::OPEN_READ), Os::File::OP_OK);
+    ASSERT_EQ(this->component.validateWad(file), Doom::WadStatus::DIRECTORY_OUTSIDE_FILE);
+    file.close();
+    ASSERT_EQ(Os::FileSystem::removeFile(PATH), Os::FileSystem::OP_OK);
 }
 
 void DoomEngineTester::testStartRejectsMissingWad() {
@@ -607,6 +748,55 @@ void DoomEngineTester::testEngineFaultStopsEngine() {
     ASSERT_CMD_RESPONSE(2, DoomEngine::OPCODE_STOP, 2, Fw::CmdResponse::OK);
     ASSERT_TLM_State_SIZE(3);
     ASSERT_TLM_State(2, Doom::EngineState::FAILED);
+    this->component.m_engineCreated = false;
+}
+
+void DoomEngineTester::testEngineFaultUnwindsToArmedCaller() {
+    // The trampolines must longjmp back to the armed engine entry, not
+    // return: each of the three entry points is driven through setjmp.
+    this->component.m_engineCreated = true;
+    this->component.m_engineRunning.store(true);
+    volatile U32 landed = 0U;
+    if (setjmp(this->component.m_faultJmp) == 0) {
+        this->component.m_faultJmpArmed = true;
+        I_Error(const_cast<char*>("Z_Malloc: failed on allocation of %i bytes"), 42);
+        ADD_FAILURE() << "I_Error returned";
+    } else {
+        landed = 1U;
+    }
+    this->component.m_faultJmpArmed = false;
+    ASSERT_EQ(landed, 1U);
+    ASSERT_FALSE(this->component.m_engineRunning.load());
+    ASSERT_TRUE(this->component.m_engineFaulted.load());
+    ASSERT_EVENTS_EngineFault_SIZE(1);
+    ASSERT_EVENTS_EngineFault(0, "Z_Malloc: failed on allocation of 42 bytes");
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+
+    if (setjmp(this->component.m_faultJmp) == 0) {
+        this->component.m_faultJmpArmed = true;
+        I_Quit();
+        ADD_FAILURE() << "I_Quit returned";
+    }
+    this->component.m_faultJmpArmed = false;
+    ASSERT_EVENTS_EngineFault_SIZE(2);
+    ASSERT_EVENTS_EngineFault(1, "engine requested quit");
+
+    if (setjmp(this->component.m_faultJmp) == 0) {
+        this->component.m_faultJmpArmed = true;
+        fprime_doom_upstream_exit(-1);
+        ADD_FAILURE() << "exit trampoline returned";
+    }
+    this->component.m_faultJmpArmed = false;
+    ASSERT_EVENTS_EngineFault_SIZE(3);
+    ASSERT_EVENTS_EngineFault(2, "engine exit(-1)");
+
+    // After the jump the tick path stays out of the engine: a running
+    // tick on the faulted component re-publishes FAILED and returns.
+    this->clearHistory();
+    this->invoke_to_schedIn(0, 0);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+    ASSERT_EQ(this->m_frameCaptureCount, 0u);
     this->component.m_engineCreated = false;
 }
 

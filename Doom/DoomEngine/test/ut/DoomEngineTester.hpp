@@ -54,6 +54,10 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testStartRejectsUnconfiguredWad();
     void testStartRejectsWithoutInit();
     void testEngineFaultStopsEngine();
+    void testEngineFaultUnwindsToArmedCaller();
+    void testKeyRejectedThrottleReArmsOnReset();
+    void testRateTelemetryWindow();
+    void testValidateWadWalksChunkedDirectory();
     void testStartCommandRejectsWhenRunning();
     void testHeartbeatSelfHealsStaleRunning();
 
