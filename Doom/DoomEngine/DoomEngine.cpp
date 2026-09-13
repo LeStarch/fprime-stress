@@ -9,22 +9,21 @@
 // the singleton DoomEngine instance.
 //
 // Cross-thread communication is limited to the key queue (guarded by
-// m_keyMutex) and the start/stop handoff: forceStart rendezvouses with
-// any in-flight schedIn tick (m_tickInProgress), publishes all engine
-// state, then stores m_engineRunning; schedIn_handler loads it
-// (seq_cst, ordered against m_tickInProgress) before touching any
-// engine state.
+// m_keyMutex) and three atomic latches: m_startRequested and
+// m_resetRequested are set by the command/autoStart threads and
+// consumed by the rate-group thread at the top of a tick, which then
+// performs the start/reset itself; m_engineRunning is cleared by Stop
+// and set only by the rate-group thread. All other engine state is
+// owned by the rate-group thread.
 // ======================================================================
 #include "Doom/DoomEngine/DoomEngine.hpp"
 
 #include "Doom/DoomConfig/FppConstantsAc.hpp"
 
 #include <Fw/Buffer/Buffer.hpp>
-#include <Fw/Time/TimeInterval.hpp>
 #include <Fw/Types/Assert.hpp>
 #include <Fw/Types/String.hpp>
 #include <Os/File.hpp>
-#include <Os/Task.hpp>
 
 #include <cstdarg>
 #include <cstdio>
@@ -57,7 +56,7 @@ DoomEngine::DoomEngine(const char* compName)
       m_framesProduced(0),
       m_lastState(EngineState::OFF),
       m_engineRunning(false),
-      m_tickInProgress(false),
+      m_startRequested(false),
       m_engineCreated(false),
       m_engineFaulted(false),
       m_faultJmpArmed(false),
@@ -117,49 +116,31 @@ void DoomEngine::setWadPath(const char* wadPath) {
 // schedIn: one Tick per rate-group invocation
 // ----------------------------------------------------------------------
 
-namespace {
-// Scope guard: clears the tick-in-progress flag on every exit path.
-class TickGuard final {
-  public:
-    explicit TickGuard(std::atomic<bool>& flag) : m_flag(flag) { m_flag.store(true); }
-    ~TickGuard() { m_flag.store(false); }
-    TickGuard(const TickGuard&) = delete;
-    TickGuard& operator=(const TickGuard&) = delete;
-
-  private:
-    std::atomic<bool>& m_flag;
-};
-}  // namespace
-
 void DoomEngine::schedIn_handler(FwIndexType portNum, U32 context) {
-    // Publish tick-in-progress BEFORE reading m_engineRunning (both
-    // seq_cst): forceStart() only mutates engine state after seeing
-    // this flag clear, so either it waits for this tick or this tick
-    // observes the engine stopped. See the rendezvous in forceStart().
-    TickGuard guard(m_tickInProgress);
-
     if (!m_engineRunning.load()) {
-        // Engine not running - re-publish the last state (OFF, FAILED,
-        // or a transient STARTING) rather than clobbering it with OFF.
-        // Self-heal a stale RUNNING left by a tick that raced a Stop,
-        // re-checking the running flag so a concurrent Start that just
-        // published RUNNING is not overwritten.
-        const EngineState::T last = m_lastState.load();
-        if (last == EngineState::RUNNING) {
-            if (!m_engineRunning.load()) {
-                this->publishState(EngineState::OFF);
-            }
+        if (m_startRequested.exchange(false)) {
+            // Start latched by forceStart (already validated there):
+            // bring the engine up on this thread, then run the tick.
+            this->applyStart();
         } else {
-            this->tlmWrite_State(EngineState(last));
+            // Engine not running - re-publish the last state (OFF or
+            // FAILED) rather than clobbering it with OFF. Self-heal a
+            // stale RUNNING left by a tick that raced a Stop.
+            const EngineState::T last = m_lastState.load();
+            if (last == EngineState::RUNNING) {
+                this->publishState(EngineState::OFF);
+            } else {
+                this->tlmWrite_State(EngineState(last));
+            }
+            return;
         }
-        return;
     }
 
     // Variable-rate support: a nonzero context carries the rate
     // group's period in microseconds per tick. The engine clock then
     // advances by tick time, so any rate-group frequency paces DOOM
     // correctly. Context 0 keeps the legacy OS-clock behavior. Only
-    // running ticks touch the clock: forceStart owns it while stopped.
+    // running ticks touch the clock.
     if (context > 0U) {
         if (!m_useTickTime) {
             // Fold in real time accrued so far; the clock never steps back.
@@ -279,6 +260,11 @@ void DoomEngine::publishState(EngineState state) {
 
 // ----------------------------------------------------------------------
 // Engine faults (I_Error / I_Quit)
+//
+// Upstream I_Error/I_Quit exit() the process, so setjmp brackets each
+// engine entry (initEngine, schedIn) and engineFault longjmps back.
+// Invariants: only C frames and the trampoline live between the two, no
+// lock held, no automatics touched across the jump, fault is terminal.
 // ----------------------------------------------------------------------
 
 void DoomEngine::recordEngineFault(const char* message) {
@@ -289,6 +275,7 @@ void DoomEngine::recordEngineFault(const char* message) {
 }
 
 void DoomEngine::engineFault(const char* message) {
+    // recordEngineFault's temporaries are destroyed before the jump.
     this->recordEngineFault(message);
     // No engine call in progress: nothing to unwind to.
     FW_ASSERT(m_faultJmpArmed);
@@ -296,10 +283,92 @@ void DoomEngine::engineFault(const char* message) {
 }
 
 // ----------------------------------------------------------------------
+// WAD validation
+// ----------------------------------------------------------------------
+
+namespace {
+// WAD on-disk layout: 12-byte header, then numlumps 16-byte directory
+// entries (little-endian I32 filepos, I32 size, 8-char name).
+constexpr FwSizeType WAD_HEADER_BYTES = 12U;
+constexpr FwSizeType WAD_DIR_ENTRY_BYTES = 16U;
+constexpr FwSizeType WAD_DIR_CHUNK_ENTRIES = 64U;
+// Bounds the directory walk; commercial IWADs have < 3000 lumps.
+constexpr U32 WAD_MAX_LUMPS = 65535U;
+// Lumps the engine dereferences unconditionally during D_DoomMain.
+const char* const WAD_REQUIRED_LUMPS[] = {"PLAYPAL", "COLORMAP", "PNAMES", "TEXTURE1"};
+
+U32 readLe32(const U8* p) {
+    return static_cast<U32>(p[0]) | (static_cast<U32>(p[1]) << 8) | (static_cast<U32>(p[2]) << 16) |
+           (static_cast<U32>(p[3]) << 24);
+}
+
+bool readExact(Os::File& file, U8* buffer, FwSizeType bytes) {
+    FwSizeType got = bytes;
+    return (file.read(buffer, got) == Os::File::OP_OK) && (got == bytes);
+}
+}  // namespace
+
+WadStatus DoomEngine::validateWad(Os::File& wad) {
+    FwSizeType fileSize = 0U;
+    if (wad.size(fileSize) != Os::File::OP_OK) {
+        return WadStatus::SIZE_UNKNOWN;
+    }
+    U8 header[WAD_HEADER_BYTES];
+    if ((wad.seek(0, Os::File::SeekType::ABSOLUTE) != Os::File::OP_OK) || !readExact(wad, header, sizeof(header))) {
+        return WadStatus::SHORT_HEADER;
+    }
+    if (::memcmp(header, "IWAD", 4) != 0) {
+        return WadStatus::NOT_IWAD;
+    }
+    const U32 numLumps = readLe32(&header[4]);
+    const U32 dirOffset = readLe32(&header[8]);
+    if ((numLumps == 0U) || (numLumps > WAD_MAX_LUMPS)) {
+        return WadStatus::LUMP_COUNT_OUT_OF_RANGE;
+    }
+    // 64-bit arithmetic: offset + count*16 cannot wrap for the bounded numLumps.
+    const U64 dirEnd = static_cast<U64>(dirOffset) + (static_cast<U64>(numLumps) * WAD_DIR_ENTRY_BYTES);
+    if ((dirOffset < WAD_HEADER_BYTES) || (dirEnd > static_cast<U64>(fileSize))) {
+        return WadStatus::DIRECTORY_OUTSIDE_FILE;
+    }
+    if (wad.seek(static_cast<FwSignedSizeType>(dirOffset), Os::File::SeekType::ABSOLUTE) != Os::File::OP_OK) {
+        return WadStatus::DIRECTORY_SEEK_FAILED;
+    }
+
+    bool found[FW_NUM_ARRAY_ELEMENTS(WAD_REQUIRED_LUMPS)] = {};
+    U8 chunk[WAD_DIR_CHUNK_ENTRIES * WAD_DIR_ENTRY_BYTES];
+    for (U32 done = 0U; done < numLumps; done += WAD_DIR_CHUNK_ENTRIES) {
+        const U32 remaining = numLumps - done;
+        const FwSizeType count = (remaining < WAD_DIR_CHUNK_ENTRIES) ? remaining : WAD_DIR_CHUNK_ENTRIES;
+        if (!readExact(wad, chunk, count * WAD_DIR_ENTRY_BYTES)) {
+            return WadStatus::SHORT_DIRECTORY;
+        }
+        for (FwSizeType i = 0U; i < count; i++) {
+            const U8* const entry = &chunk[i * WAD_DIR_ENTRY_BYTES];
+            const U64 lumpEnd = static_cast<U64>(readLe32(&entry[0])) + static_cast<U64>(readLe32(&entry[4]));
+            if (lumpEnd > static_cast<U64>(fileSize)) {
+                return WadStatus::LUMP_OUTSIDE_FILE;
+            }
+            for (FwSizeType r = 0U; r < FW_NUM_ARRAY_ELEMENTS(WAD_REQUIRED_LUMPS); r++) {
+                // Names are space/NUL padded to 8 bytes; strncmp stops at either.
+                if (::strncmp(reinterpret_cast<const char*>(&entry[8]), WAD_REQUIRED_LUMPS[r], 8) == 0) {
+                    found[r] = true;
+                }
+            }
+        }
+    }
+    for (FwSizeType r = 0U; r < FW_NUM_ARRAY_ELEMENTS(WAD_REQUIRED_LUMPS); r++) {
+        if (!found[r]) {
+            return WadStatus::REQUIRED_LUMP_MISSING;
+        }
+    }
+    return WadStatus::VALID;
+}
+
+// ----------------------------------------------------------------------
 // Initialization
 // ----------------------------------------------------------------------
 
-bool DoomEngine::initEngine() {
+InitStatus DoomEngine::initEngine() {
     Os::ScopeLock startLock(m_startMutex);
     FW_ASSERT(!m_engineCreated);
     // Reject a missing WAD here so the engine's own I_Error path is
@@ -309,14 +378,22 @@ bool DoomEngine::initEngine() {
         const char* const shown = (m_wadPath[0] != '\0') ? m_wadPath : "(no WAD path configured)";
         this->log_WARNING_HI_WadUnavailable(Fw::String(shown));
         this->publishState(EngineState::FAILED);
-        return false;
+        return InitStatus::WAD_UNAVAILABLE;
     }
+    // Structural validation closes the common ground-reachable I_Error
+    // paths (bad magic, truncated file, missing lumps) before Create.
+    const WadStatus wadStatus = this->validateWad(wad);
     wad.close();
+    if (wadStatus != WadStatus::VALID) {
+        this->log_WARNING_HI_WadInvalid(Fw::String(m_wadPath), wadStatus);
+        this->publishState(EngineState::FAILED);
+        return InitStatus::WAD_INVALID;
+    }
 
     m_virtualSleepMs = 0U;
     m_realElapsedUsec = 0U;
     m_tickElapsedUsec = 0U;
-    // Reference time for DG_GetTicksMs during Create; forceStart rebases it.
+    // Reference time for DG_GetTicksMs during Create; applyStart rebases it.
     m_engineStartValid = (m_engineStart.now() == Os::RawTime::Status::OP_OK);
 
     // Singletics: exactly one game tic per doomgeneric_Tick() call, so
@@ -333,53 +410,53 @@ bool DoomEngine::initEngine() {
     }
     m_faultJmpArmed = false;
     if (m_engineFaulted.load()) {
-        return false;
+        return InitStatus::ENGINE_FAULT;
     }
     m_engineCreated = true;
-    return true;
+    return InitStatus::OK;
 }
 
 // ----------------------------------------------------------------------
 // Commands
 // ----------------------------------------------------------------------
 
-bool DoomEngine::forceStart() {
+RequestStatus DoomEngine::engineAvailable() const {
+    if (m_engineFaulted.load()) {
+        return RequestStatus::FAULTED;
+    }
+    if (!m_engineCreated) {
+        return RequestStatus::NOT_INITIALIZED;
+    }
+    return RequestStatus::ACCEPTED;
+}
+
+RequestStatus DoomEngine::forceStart() {
     // Serialize concurrent callers (autoStart thread vs a ground Start
-    // command): only one caller may run the check-rendezvous-create
-    // sequence at a time.
+    // command) and Stop/Reset, so the checks below read a consistent
+    // running/latched/created/faulted picture.
     Os::ScopeLock startLock(m_startMutex);
     if (m_engineRunning.load()) {
-        this->log_WARNING_LO_AlreadyRunning();
-        return false;
+        this->log_WARNING_HI_StartRejected(RequestStatus::ALREADY_RUNNING);
+        return RequestStatus::ALREADY_RUNNING;
     }
-    // Rendezvous with the rate-group thread: a schedIn tick that
-    // loaded m_engineRunning==true before a Stop may still be
-    // executing; wait for it to finish before mutating engine state
-    // (bounded at ~1 s, far beyond any tick duration).
-    bool rendezvousOk = true;
-    for (U32 spin = 0U; m_tickInProgress.load(); spin++) {
-        if (spin >= RENDEZVOUS_MAX_SPINS) {
-            rendezvousOk = false;
-            break;
-        }
-        const Os::Task::Status delayStatus = Os::Task::delay(Fw::TimeInterval(0, RENDEZVOUS_DELAY_USEC));
-        if (delayStatus != Os::Task::Status::OP_OK) {
-            rendezvousOk = false;
-            break;
-        }
+    if (m_startRequested.load()) {
+        this->log_WARNING_HI_StartRejected(RequestStatus::START_PENDING);
+        return RequestStatus::START_PENDING;
     }
-    if (!rendezvousOk) {
-        // Busy rejects deliberately leave State telemetry untouched.
-        this->log_WARNING_LO_StartBusy();
-        return false;
-    }
-    if (!m_engineCreated || m_engineFaulted.load()) {
-        this->log_WARNING_HI_EngineUnavailable();
+    const RequestStatus status = this->engineAvailable();
+    if (status != RequestStatus::ACCEPTED) {
+        this->log_WARNING_HI_StartRejected(status);
         this->publishState(EngineState::FAILED);
-        return false;
+        return status;
     }
+    // Nothing else is touched here: the rate-group thread owns the
+    // engine state and performs the start in applyStart on its next tick.
     this->publishState(EngineState::STARTING);
+    m_startRequested.store(true);
+    return RequestStatus::ACCEPTED;
+}
 
+void DoomEngine::applyStart() {
     // Rebase the DG_GetTicksMs reference so time spent stopped is not
     // counted; the accumulators are kept so the clock never steps back.
     const Os::RawTime::Status rt = m_engineStart.now();
@@ -391,25 +468,25 @@ bool DoomEngine::forceStart() {
     m_meltCount = 0U;
     m_drawsThisTick = 0U;
 
-    // seq_cst store, matching schedIn_handler's load: all handoff
-    // operations share the single seq_cst total order.
     m_engineRunning.store(true);
     this->log_ACTIVITY_HI_EngineStarted();
     this->publishState(EngineState::RUNNING);
-    return true;
 }
 
 void DoomEngine::Start_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
-    const bool ok = this->forceStart();
-    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+    const RequestStatus status = this->forceStart();
+    this->cmdResponse_out(opCode, cmdSeq,
+                          (status == RequestStatus::ACCEPTED) ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
 }
 
 void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     // Cooperative stop - the rate group will simply stop calling Tick.
-    // DOOM has no clean shutdown path, so we just stop driving it.
-    // Serialize against an in-flight forceStart (e.g. autoStart) so a
-    // Stop is never silently overwritten by a concurrent start.
+    // DOOM has no clean shutdown path, so we just stop driving it. A
+    // Start latched but not yet applied is cancelled. Serialize against
+    // forceStart so a Stop is never silently overwritten by a
+    // concurrent start.
     Os::ScopeLock startLock(m_startMutex);
+    m_startRequested.store(false);
     if (m_engineRunning.load()) {
         m_engineRunning.store(false);
         this->log_ACTIVITY_HI_EngineStopped();
@@ -423,8 +500,9 @@ void DoomEngine::Stop_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
 void DoomEngine::Reset_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     // Serialize with Start/Stop so m_engineCreated is read consistently.
     Os::ScopeLock startLock(m_startMutex);
-    if (!m_engineCreated || m_engineFaulted.load()) {
-        this->log_WARNING_LO_ResetNotStarted();
+    const RequestStatus status = this->engineAvailable();
+    if (status != RequestStatus::ACCEPTED) {
+        this->log_WARNING_LO_ResetRejected(status);
         this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::EXECUTION_ERROR);
         return;
     }
@@ -435,24 +513,24 @@ void DoomEngine::Reset_cmdHandler(FwOpcodeType opCode, U32 cmdSeq) {
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 
+Fw::CmdResponse DoomEngine::keyResponse(KeyQueueStatus status) {
+    return (status == KeyQueueStatus::QUEUED) ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR;
+}
+
 void DoomEngine::KeyTap_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
-    const bool ok = this->enqueueKeyTap(static_cast<U8>(key.e));
-    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueKeyTap(static_cast<U8>(key.e))));
 }
 
 void DoomEngine::KeyDown_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
-    const bool ok = this->enqueueKey(true, static_cast<U8>(key.e));
-    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueKey(true, static_cast<U8>(key.e))));
 }
 
 void DoomEngine::KeyUp_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, const Doom::DoomKey& key) {
-    const bool ok = this->enqueueKey(false, static_cast<U8>(key.e));
-    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueKey(false, static_cast<U8>(key.e))));
 }
 
 void DoomEngine::RawKey_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, bool pressed, U8 code) {
-    const bool ok = this->enqueueKey(pressed, code);
-    this->cmdResponse_out(opCode, cmdSeq, ok ? Fw::CmdResponse::OK : Fw::CmdResponse::EXECUTION_ERROR);
+    this->cmdResponse_out(opCode, cmdSeq, keyResponse(this->enqueueKey(pressed, code)));
 }
 
 // ----------------------------------------------------------------------
@@ -484,8 +562,8 @@ void DoomEngine::rawKeyIn_handler(FwIndexType /*portNum*/, bool pressed, U8 code
 // Key queue helpers
 // ----------------------------------------------------------------------
 
-bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
-    bool ok = false;
+KeyQueueStatus DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
+    KeyQueueStatus status = KeyQueueStatus::QUEUE_FULL;
     bool emitOverflow = false;
     m_keyMutex.lock();
     // Every received key event counts toward the input rate windows,
@@ -509,7 +587,7 @@ bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
             m_keyQueueCount++;
         }
         m_overflowReported = false;
-        ok = true;
+        status = KeyQueueStatus::QUEUED;
     } else {
         m_keysDropped += events;
         if (!m_overflowReported) {
@@ -521,15 +599,15 @@ bool DoomEngine::enqueueKeyEvents(const U16* entries, FwSizeType count) {
     if (emitOverflow) {
         this->log_WARNING_LO_KeyQueueOverflow();
     }
-    return ok;
+    return status;
 }
 
-bool DoomEngine::enqueueKey(bool pressed, U8 code) {
+KeyQueueStatus DoomEngine::enqueueKey(bool pressed, U8 code) {
     const U16 entry = packKeyEntry(pressed, code);
     return this->enqueueKeyEvents(&entry, 1);
 }
 
-bool DoomEngine::enqueueKeyTap(U8 code) {
+KeyQueueStatus DoomEngine::enqueueKeyTap(U8 code) {
     // The barrier holds the release until the next tic: DOOM's responder
     // clears a key pressed and released within one tic before the ticcmd
     // builder samples it, so a same-tic tap is a no-op for gameplay keys.

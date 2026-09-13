@@ -36,7 +36,7 @@ _engine_started = False
 def doom_running(fprime_test_api):
     """Ensure the engine is running before the first test of the run.
 
-    Start is idempotent from the test's perspective (AlreadyRunning if a
+    Start is idempotent from the test's perspective (StartRejected if a
     prior run left it going), and completion events can be dropped under
     full row-telemetry load, so running is confirmed via row telemetry.
     """

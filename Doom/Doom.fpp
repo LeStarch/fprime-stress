@@ -41,10 +41,49 @@ module Doom {
 
   enum EngineState {
     OFF       = 0  @< Engine not running: never started, or stopped (resumable).
-    STARTING  = 1  @< Engine bring-up is running in the Start handler.
+    STARTING  = 1  @< Start accepted; the rate group applies it on its next tick.
     RUNNING   = 2  @< Engine is ticking and producing frames.
     FAILED    = 3  @< Engine failed to start (e.g. WAD unavailable).
   } default OFF
+
+  @ Result of the structural IWAD check run by initEngine before the
+  @ engine is created. Every failure names the check that rejected it.
+  enum WadStatus {
+    VALID                   = 0  @< Header, directory and required lumps all check out.
+    SIZE_UNKNOWN            = 1  @< The file size could not be determined.
+    SHORT_HEADER            = 2  @< Fewer than 12 header bytes.
+    NOT_IWAD                = 3  @< Magic is not "IWAD".
+    LUMP_COUNT_OUT_OF_RANGE = 4  @< numlumps is zero or above the bound.
+    DIRECTORY_OUTSIDE_FILE  = 5  @< Directory offset/extent exceeds the file.
+    DIRECTORY_SEEK_FAILED   = 6  @< Seeking to the directory failed.
+    SHORT_DIRECTORY         = 7  @< Directory read returned fewer bytes than declared.
+    LUMP_OUTSIDE_FILE       = 8  @< A lump's filepos + size exceeds the file.
+    REQUIRED_LUMP_MISSING   = 9  @< PLAYPAL, COLORMAP, PNAMES or TEXTURE1 absent.
+  } default VALID
+
+  @ Outcome of initEngine (topology-time engine creation).
+  enum InitStatus {
+    OK              = 0  @< Engine created; Start is now accepted.
+    WAD_UNAVAILABLE = 1  @< No WAD path configured or the file could not be opened.
+    WAD_INVALID     = 2  @< The WAD failed structural validation (see WadStatus).
+    ENGINE_FAULT    = 3  @< doomgeneric_Create raised I_Error/I_Quit.
+  } default OK
+
+  @ Outcome of a Start or Reset request; the rejections name the
+  @ precondition that failed.
+  enum RequestStatus {
+    ACCEPTED        = 0  @< Request latched for the rate-group thread.
+    ALREADY_RUNNING = 1  @< Engine is already being ticked.
+    START_PENDING   = 2  @< A previous Start has not yet been applied.
+    NOT_INITIALIZED = 3  @< initEngine did not succeed.
+    FAULTED         = 4  @< The engine has faulted; FAILED is terminal.
+  } default ACCEPTED
+
+  @ Outcome of queuing key input for the engine.
+  enum KeyQueueStatus {
+    QUEUED     = 0  @< All entries of the event were queued.
+    QUEUE_FULL = 1  @< No entry was queued; input dropped and counted.
+  } default QUEUED
 
   # ----------------------------------------------------------------------
   # Ground-facing key enumeration

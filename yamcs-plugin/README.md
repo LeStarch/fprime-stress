@@ -26,7 +26,7 @@ Space / Ctrl. The panel offers three controls:
   (autoStart, GDS, sequences) or the panel is closed and reopened.
 - **Reset** — sends `Doom.Reset`, returning the game to its boot
   title screen (the engine is not torn down; input is flushed and
-  the title sequence restarted; `EngineReset` / `ResetNotStarted`
+  the title sequence restarted; `EngineReset` / `ResetRejected`
   events report the outcome).
 - **Record/Stop Recording** — a toggle that records every command
   sent from the panel; stopping downloads them as an F Prime textual

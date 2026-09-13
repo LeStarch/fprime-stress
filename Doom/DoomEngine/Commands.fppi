@@ -3,17 +3,17 @@
 # ----------------------------------------------------------------------
 
 # Commands are sync because the component is passive (no worker
-# thread) and run on the command-dispatch thread. Key handlers are a
-# short mutex-guarded enqueue; Start may first wait (bounded, ~1 s)
-# for an in-flight rate-group tick, and if another Start/Stop is in
-# flight blocks until it completes.
+# thread) and run on the command-dispatch thread. No handler blocks
+# beyond a short mutex hold: key handlers enqueue, Start/Reset latch a
+# request that the rate-group thread applies on its next tick.
 
-@ Start driving the DOOM engine created by initEngine at topology
-@ setup: after this command completes, the rate-group thread (via the
-@ schedIn port) drives doomgeneric_Tick. A Start after a Stop resumes
-@ the existing engine. Responds EXECUTION_ERROR if the engine is
-@ already running, the rendezvous times out (StartBusy), or the engine
-@ was never created or has faulted (EngineUnavailable).
+@ Request that the rate-group thread start driving the DOOM engine
+@ created by initEngine at topology setup. Responds OK once the request
+@ is accepted (State STARTING); the next schedIn tick performs the
+@ start (EngineStarted, State RUNNING). A Start after a Stop resumes
+@ the existing engine. Responds EXECUTION_ERROR and emits
+@ StartRejected naming the failed precondition (ALREADY_RUNNING,
+@ START_PENDING, NOT_INITIALIZED, FAULTED).
 sync command Start \
   opcode 0
 
@@ -64,7 +64,8 @@ sync command Stop \
 @ machinery. The engine itself is not torn down (the upstream engine
 @ has no clean shutdown path). A Reset while the engine is created
 @ but stopped responds OK and latches the request; it is applied on
-@ the first tick after the next Start. Responds EXECUTION_ERROR if
-@ the engine has never been started.
+@ the first tick after the next Start. Responds EXECUTION_ERROR and
+@ emits ResetRejected (NOT_INITIALIZED, FAULTED) if there is no
+@ engine to reset.
 sync command Reset \
   opcode 6

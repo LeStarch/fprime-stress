@@ -79,16 +79,22 @@ TEST(OffNominal, MeltOverflowCountsDroppedFrames) {
     tester->testMeltOverflowCountsDroppedFrames();
 }
 
-TEST(OffNominal, ForceStartBusyRendezvousTimesOut) {
+TEST(OffNominal, StopCancelsPendingStart) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
-    tester->testForceStartBusyRendezvousTimesOut();
+    tester->testStopCancelsPendingStart();
 }
 
 TEST(Nominal, StartRejectsMissingWad) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();
     tester->testStartRejectsMissingWad();
+}
+
+TEST(OffNominal, InitRejectsMalformedWad) {
+    // Heap-allocated: the melt frame buffer is too large for the stack.
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testInitRejectsMalformedWad();
 }
 
 TEST(Nominal, StartRejectsUnconfiguredWad) {

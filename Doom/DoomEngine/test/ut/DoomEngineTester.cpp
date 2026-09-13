@@ -6,6 +6,9 @@
 #include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
 #include "Doom/DoomConfig/FppConstantsAc.hpp"
 
+#include <Os/File.hpp>
+#include <Os/FileSystem.hpp>
+
 extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/doomgeneric.h"
 }
@@ -185,11 +188,13 @@ void DoomEngineTester::testStopWhileRunning() {
 
 void DoomEngineTester::testResetRejectsBeforeStart() {
     // Reset before the engine was ever created has no game state to
-    // reset: EXECUTION_ERROR, ResetNotStarted, and no pending request.
+    // reset: EXECUTION_ERROR, ResetRejected(NOT_INITIALIZED), and no pending
+    // request.
     this->sendCmd_Reset(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RESET, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_ResetNotStarted_SIZE(1);
+    ASSERT_EVENTS_ResetRejected_SIZE(1);
+    ASSERT_EVENTS_ResetRejected(0, Doom::RequestStatus::NOT_INITIALIZED);
     ASSERT_EVENTS_EngineReset_SIZE(0);
     ASSERT_FALSE(this->component.m_resetRequested.load());
 }
@@ -202,7 +207,7 @@ void DoomEngineTester::testResetCommandSetsFlag() {
     this->sendCmd_Reset(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_RESET, 0, Fw::CmdResponse::OK);
-    ASSERT_EVENTS_ResetNotStarted_SIZE(0);
+    ASSERT_EVENTS_ResetRejected_SIZE(0);
     ASSERT_EVENTS_EngineReset_SIZE(0);
     ASSERT_TRUE(this->component.m_resetRequested.load());
     this->component.m_resetRequested.store(false);
@@ -403,19 +408,24 @@ void DoomEngineTester::testMeltOverflowCountsDroppedFrames() {
     DG_ScreenBuffer = nullptr;
 }
 
-void DoomEngineTester::testForceStartBusyRendezvousTimesOut() {
-    // Simulate a rate-group tick that never finishes: forceStart must
-    // give up after its bounded wait, emit StartBusy, and leave the
-    // engine stopped without touching engine state.
-    this->component.m_tickInProgress.store(true);
-    ASSERT_FALSE(this->component.forceStart());
-    this->component.m_tickInProgress.store(false);
+void DoomEngineTester::testStopCancelsPendingStart() {
+    // A Stop issued between Start's acceptance and the next tick must
+    // cancel the latched request, so the tick stays a heartbeat.
+    this->component.m_engineCreated = true;
+    ASSERT_EQ(this->component.forceStart(), Doom::RequestStatus::ACCEPTED);
+    ASSERT_TRUE(this->component.m_startRequested.load());
+    ASSERT_TLM_State(0, Doom::EngineState::STARTING);
 
-    ASSERT_EVENTS_StartBusy_SIZE(1);
-    ASSERT_EVENTS_AlreadyRunning_SIZE(0);
+    this->sendCmd_Stop(TEST_INSTANCE_ID, 0);
+    ASSERT_FALSE(this->component.m_startRequested.load());
+    ASSERT_EVENTS_EngineStopped_SIZE(0);
+    ASSERT_TLM_State(1, Doom::EngineState::OFF);
+
+    this->invoke_to_schedIn(0, 0);
     ASSERT_FALSE(this->component.m_engineRunning.load());
-    // The timeout path bails out before any State telemetry.
-    ASSERT_TLM_State_SIZE(0);
+    ASSERT_EVENTS_EngineStarted_SIZE(0);
+    ASSERT_TLM_State_SIZE(3);
+    ASSERT_TLM_State(2, Doom::EngineState::OFF);
 }
 
 void DoomEngineTester::testKeyTapAllOrNothing() {
@@ -439,11 +449,79 @@ void DoomEngineTester::testKeyTapAllOrNothing() {
     ASSERT_EQ(this->component.m_keysDropped, 4U);
 }
 
+void DoomEngineTester::writeFixtureWad(const char* path, const U8* bytes, FwSizeType size) {
+    Os::File file;
+    ASSERT_EQ(file.open(path, Os::File::OPEN_CREATE, Os::File::OVERWRITE), Os::File::OP_OK);
+    FwSizeType written = size;
+    ASSERT_EQ(file.write(bytes, written), Os::File::OP_OK);
+    ASSERT_EQ(written, size);
+    file.close();
+}
+
+void DoomEngineTester::expectWadInvalid(const char* path, Doom::WadStatus::T reason) {
+    this->clearHistory();
+    this->component.m_lastState.store(Doom::EngineState::OFF);
+    this->component.setWadPath(path);
+    ASSERT_EQ(this->component.initEngine(), Doom::InitStatus::WAD_INVALID);
+    ASSERT_FALSE(this->component.m_engineCreated);
+    ASSERT_EVENTS_WadUnavailable_SIZE(0);
+    ASSERT_EVENTS_WadInvalid_SIZE(1);
+    ASSERT_EVENTS_WadInvalid(0, path, reason);
+    ASSERT_TLM_State_SIZE(1);
+    ASSERT_TLM_State(0, Doom::EngineState::FAILED);
+}
+
+void DoomEngineTester::testInitRejectsMalformedWad() {
+    // Each fixture trips exactly one validateWad check; none may reach
+    // doomgeneric_Create, whose I_Error would otherwise be the first
+    // line of defence.
+    static const char* const PATH = "/tmp/DoomEngineTester_bad.wad";
+
+    // Not an IWAD: PWAD magic.
+    static const U8 PWAD[] = {'P', 'W', 'A', 'D', 1, 0, 0,   0, 12, 0, 0, 0, 0, 0,
+                              0,   0,   0,   0,   0, 0, 'X', 0, 0,  0, 0, 0, 0, 0};
+    this->writeFixtureWad(PATH, PWAD, sizeof(PWAD));
+    this->expectWadInvalid(PATH, Doom::WadStatus::NOT_IWAD);
+
+    // Header only: fewer than 12 bytes.
+    static const U8 SHORT[] = {'I', 'W', 'A', 'D', 1, 0};
+    this->writeFixtureWad(PATH, SHORT, sizeof(SHORT));
+    this->expectWadInvalid(PATH, Doom::WadStatus::SHORT_HEADER);
+
+    // Directory claims 2 lumps but the file ends after 1 entry.
+    static const U8 TRUNC[] = {'I', 'W', 'A', 'D', 2, 0, 0,   0, 12, 0, 0, 0, 0, 0,
+                               0,   0,   0,   0,   0, 0, 'X', 0, 0,  0, 0, 0, 0, 0};
+    this->writeFixtureWad(PATH, TRUNC, sizeof(TRUNC));
+    this->expectWadInvalid(PATH, Doom::WadStatus::DIRECTORY_OUTSIDE_FILE);
+
+    // One lump whose data extends past end of file.
+    static const U8 LUMP[] = {'I', 'W', 'A', 'D', 1, 0, 0,   0, 12, 0, 0, 0, 0, 0,
+                              0,   0,   255, 0,   0, 0, 'X', 0, 0,  0, 0, 0, 0, 0};
+    this->writeFixtureWad(PATH, LUMP, sizeof(LUMP));
+    this->expectWadInvalid(PATH, Doom::WadStatus::LUMP_OUTSIDE_FILE);
+
+    // Well-formed directory that lacks the lumps the engine needs.
+    static const U8 NOLUMP[] = {'I', 'W', 'A', 'D', 1, 0, 0,   0,   12,  0,   0,   0,   0,   0,
+                                0,   0,   0,   0,   0, 0, 'P', 'L', 'A', 'Y', 'P', 'A', 'L', 0};
+    this->writeFixtureWad(PATH, NOLUMP, sizeof(NOLUMP));
+    this->expectWadInvalid(PATH, Doom::WadStatus::REQUIRED_LUMP_MISSING);
+
+    // Start must be locked out exactly as for a missing WAD.
+    this->sendCmd_Start(TEST_INSTANCE_ID, 0);
+    ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::NOT_INITIALIZED);
+    ASSERT_EVENTS_EngineStarted_SIZE(0);
+
+    Os::FileSystem::Status removeStatus = Os::FileSystem::removeFile(PATH);
+    ASSERT_EQ(removeStatus, Os::FileSystem::OP_OK);
+}
+
 void DoomEngineTester::testStartRejectsMissingWad() {
     // A missing WAD must fail initEngine (WadUnavailable + FAILED)
-    // without creating the engine; Start is then EngineUnavailable.
+    // without creating the engine; Start is then StartRejected.
     this->component.setWadPath("/nonexistent/doom1.wad");
-    ASSERT_FALSE(this->component.initEngine());
+    ASSERT_EQ(this->component.initEngine(), Doom::InitStatus::WAD_UNAVAILABLE);
     ASSERT_FALSE(this->component.m_engineCreated);
     ASSERT_EVENTS_WadUnavailable_SIZE(1);
     ASSERT_EVENTS_WadUnavailable(0, "/nonexistent/doom1.wad");
@@ -453,7 +531,8 @@ void DoomEngineTester::testStartRejectsMissingWad() {
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::NOT_INITIALIZED);
     ASSERT_EVENTS_EngineStarted_SIZE(0);
     ASSERT_TLM_State_SIZE(2);
     ASSERT_TLM_State(1, Doom::EngineState::FAILED);
@@ -480,10 +559,12 @@ void DoomEngineTester::testEngineFaultStopsEngine() {
 
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::FAULTED);
     this->sendCmd_Reset(TEST_INSTANCE_ID, 1);
     ASSERT_CMD_RESPONSE(1, DoomEngine::OPCODE_RESET, 1, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_ResetNotStarted_SIZE(1);
+    ASSERT_EVENTS_ResetRejected_SIZE(1);
+    ASSERT_EVENTS_ResetRejected(0, Doom::RequestStatus::FAULTED);
 
     // Stop on a faulted engine must not re-publish OFF: FAILED is terminal.
     this->sendCmd_Stop(TEST_INSTANCE_ID, 2);
@@ -514,13 +595,14 @@ void DoomEngineTester::testStartCommandRejectsWhenRunning() {
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_AlreadyRunning_SIZE(1);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::ALREADY_RUNNING);
 }
 
 void DoomEngineTester::testStartRejectsUnconfiguredWad() {
     // No WAD path configured: initEngine must reject rather than let
     // the upstream auto-search run.
-    ASSERT_FALSE(this->component.initEngine());
+    ASSERT_EQ(this->component.initEngine(), Doom::InitStatus::WAD_UNAVAILABLE);
     ASSERT_FALSE(this->component.m_engineCreated);
     ASSERT_EVENTS_WadUnavailable_SIZE(1);
     ASSERT_EVENTS_WadUnavailable(0, "(no WAD path configured)");
@@ -529,11 +611,13 @@ void DoomEngineTester::testStartRejectsUnconfiguredWad() {
 }
 
 void DoomEngineTester::testStartRejectsWithoutInit() {
-    // Start with no initEngine: EngineUnavailable, FAILED, no engine.
+    // Start with no initEngine: StartRejected(NOT_INITIALIZED), FAILED, no
+    // engine.
     this->sendCmd_Start(TEST_INSTANCE_ID, 0);
     ASSERT_CMD_RESPONSE_SIZE(1);
     ASSERT_CMD_RESPONSE(0, DoomEngine::OPCODE_START, 0, Fw::CmdResponse::EXECUTION_ERROR);
-    ASSERT_EVENTS_EngineUnavailable_SIZE(1);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::NOT_INITIALIZED);
     ASSERT_EVENTS_WadUnavailable_SIZE(0);
     ASSERT_TLM_State_SIZE(1);
     ASSERT_TLM_State(0, Doom::EngineState::FAILED);
@@ -544,18 +628,30 @@ void DoomEngineTester::testForceStartResumesAfterStop() {
     // A Start after a Stop must resume the existing engine: no second
     // doomgeneric_Create, elapsed-time accumulators preserved (the
     // upstream timer's cached basetime must never see the clock step
-    // backwards), melt/draw pacing state discarded.
+    // backwards), melt/draw pacing state discarded. forceStart only
+    // latches; the rate-group tick applies it.
     this->component.m_engineCreated = true;
     this->component.m_realElapsedUsec = 5000000U;
     this->component.m_virtualSleepMs = 250U;
     this->component.m_meltCount = 3U;
     this->component.m_drawsThisTick = 2U;
 
-    ASSERT_TRUE(this->component.forceStart());
-
-    ASSERT_EVENTS_EngineStarted_SIZE(1);
-    ASSERT_TLM_State_SIZE(2);
+    ASSERT_EQ(this->component.forceStart(), Doom::RequestStatus::ACCEPTED);
+    ASSERT_TRUE(this->component.m_startRequested.load());
+    ASSERT_FALSE(this->component.m_engineRunning.load());
+    ASSERT_EVENTS_EngineStarted_SIZE(0);
+    ASSERT_TLM_State_SIZE(1);
     ASSERT_TLM_State(0, Doom::EngineState::STARTING);
+    ASSERT_EQ(this->component.m_meltCount, 3U);
+
+    // A latched Reset rides along so the tick applies the start and
+    // then takes the reset branch instead of doomgeneric_Tick.
+    this->component.m_resetRequested.store(true);
+    this->invoke_to_schedIn(0, 0);
+
+    ASSERT_FALSE(this->component.m_startRequested.load());
+    ASSERT_EVENTS_EngineStarted_SIZE(1);
+    ASSERT_EVENTS_EngineReset_SIZE(1);
     ASSERT_TLM_State(1, Doom::EngineState::RUNNING);
     ASSERT_TRUE(this->component.m_engineRunning.load());
     ASSERT_EQ(this->component.m_realElapsedUsec, 5000000U);
@@ -567,14 +663,22 @@ void DoomEngineTester::testForceStartResumesAfterStop() {
 }
 
 void DoomEngineTester::testForceStartWhenAlreadyRunning() {
-    // A Start while the engine runs must fail fast with AlreadyRunning
-    // and leave the running state untouched.
+    // A Start while the engine runs, or while a Start is still pending,
+    // must fail fast with StartRejected and leave state untouched.
     this->component.m_engineRunning.store(true);
-    ASSERT_FALSE(this->component.forceStart());
-    ASSERT_EVENTS_AlreadyRunning_SIZE(1);
-    ASSERT_EVENTS_StartBusy_SIZE(0);
+    ASSERT_EQ(this->component.forceStart(), Doom::RequestStatus::ALREADY_RUNNING);
+    ASSERT_EVENTS_StartRejected_SIZE(1);
+    ASSERT_EVENTS_StartRejected(0, Doom::RequestStatus::ALREADY_RUNNING);
     ASSERT_TRUE(this->component.m_engineRunning.load());
     this->component.m_engineRunning.store(false);
+
+    this->component.m_startRequested.store(true);
+    ASSERT_EQ(this->component.forceStart(), Doom::RequestStatus::START_PENDING);
+    ASSERT_EVENTS_StartRejected_SIZE(2);
+    ASSERT_EVENTS_StartRejected(1, Doom::RequestStatus::START_PENDING);
+    ASSERT_TRUE(this->component.m_startRequested.load());
+    ASSERT_TLM_State_SIZE(0);
+    this->component.m_startRequested.store(false);
 }
 
 }  // namespace Doom

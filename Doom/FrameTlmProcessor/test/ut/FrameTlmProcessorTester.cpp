@@ -26,8 +26,10 @@ FrameTlmProcessorTester::~FrameTlmProcessorTester() {
 // ----------------------------------------------------------------------
 
 void FrameTlmProcessorTester::sendFrame(U32 frameNumber, U16 width, U16 height, U32 bufferSize) {
-    // Position-dependent pattern so any offset bug fails the checks.
-    const U32 bytes = static_cast<U32>(width) * static_cast<U32>(height);
+    // Position-dependent pattern so any offset bug fails the checks. Oversized
+    // dimensions are rejected before the pixels are read, so clamp the fill.
+    const U32 requested = static_cast<U32>(width) * static_cast<U32>(height);
+    const U32 bytes = (requested < FRAME_BYTES) ? requested : FRAME_BYTES;
     for (U32 i = 0; i < bytes; i++) {
         m_pixels[i] = static_cast<U8>(i % 251U);
     }
