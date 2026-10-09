@@ -90,8 +90,8 @@ set(DOOMGENERIC_SOURCES
     "${DOOMGENERIC_DIR}/tables.c"
     "${DOOMGENERIC_DIR}/v_video.c"
     "${DOOMGENERIC_DIR}/w_checksum.c"
+    # w_file_stdc.c (C stdio) is replaced by the Os::File wad_file_class_t in DoomEngine.cpp
     "${DOOMGENERIC_DIR}/w_file.c"
-    "${DOOMGENERIC_DIR}/w_file_stdc.c"
     "${DOOMGENERIC_DIR}/w_main.c"
     "${DOOMGENERIC_DIR}/w_wad.c"
     "${DOOMGENERIC_DIR}/wi_stuff.c"

@@ -29,6 +29,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/doomgeneric.h"
@@ -38,6 +39,9 @@ extern "C" {
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/d_main.h"
 // i_video.h declares the engine's active palette (struct color colors[256]).
 #include "Doom/DoomEngine/doomgeneric/doomgeneric/i_video.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/w_file.h"
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/z_zone.h"
+extern wad_file_class_t stdc_wad_file;
 // i_system.c is compiled with exit renamed to this (see CMakeLists.txt).
 [[noreturn]] void fprime_doom_upstream_exit(int status);
 }  // extern "C"
@@ -923,3 +927,69 @@ void fprime_doom_upstream_exit(int status) {
 }
 
 }  // extern "C"
+
+// ======================================================================
+// doomgeneric wad_file_class_t backed by Os::File
+// ======================================================================
+// Replaces upstream w_file_stdc.c, which is not compiled (see
+// CMakeLists.txt): C stdio streams are not available on every F Prime
+// platform (Zephyr's picolibc serves the console only), Os::File is.
+namespace {
+
+struct OsWadFile {
+    wad_file_t wad;  // first: upstream hands back the wad_file_t* and this code casts it to OsWadFile*
+    Os::File file;
+};
+
+wad_file_t* osWadOpenFile(char* path) {
+    // Upstream allocates its wad_file_t from the zone as well
+    void* const storage = Z_Malloc(static_cast<int>(sizeof(OsWadFile)), PU_STATIC, nullptr);
+    FW_ASSERT(storage != nullptr);
+    OsWadFile* const wad = new (storage) OsWadFile;
+    FwSizeType length = 0;
+    if ((path == nullptr) || (wad->file.open(path, Os::File::OPEN_READ) != Os::File::OP_OK) ||
+        (wad->file.size(length) != Os::File::OP_OK)) {
+        wad->~OsWadFile();
+        Z_Free(storage);
+        return nullptr;
+    }
+    wad->wad.file_class = &stdc_wad_file;
+    wad->wad.mapped = nullptr;
+    wad->wad.length = static_cast<unsigned int>(length);
+    return &wad->wad;
+}
+
+void osWadCloseFile(wad_file_t* wad) {
+    FW_ASSERT(wad != nullptr);
+    OsWadFile* const osWad = reinterpret_cast<OsWadFile*>(wad);
+    osWad->file.close();
+    osWad->~OsWadFile();
+    Z_Free(osWad);
+}
+
+size_t osWadRead(wad_file_t* wad, unsigned int offset, void* buffer, size_t buffer_len) {
+    FW_ASSERT(wad != nullptr);
+    FW_ASSERT(buffer != nullptr);
+    OsWadFile* const osWad = reinterpret_cast<OsWadFile*>(wad);
+    if (osWad->file.seek(static_cast<FwSignedSizeType>(offset), Os::File::SeekType::ABSOLUTE) != Os::File::OP_OK) {
+        return 0;
+    }
+    U8* const out = static_cast<U8*>(buffer);
+    size_t total = 0;
+    while (total < buffer_len) {
+        FwSizeType chunk = static_cast<FwSizeType>(buffer_len - total);
+        if ((osWad->file.read(out + total, chunk) != Os::File::OP_OK) || (chunk == 0)) {
+            break;  // error or end of file: upstream treats a short count as such
+        }
+        total += static_cast<size_t>(chunk);
+    }
+    return total;
+}
+
+}  // namespace
+
+wad_file_class_t stdc_wad_file = {
+    osWadOpenFile,
+    osWadCloseFile,
+    osWadRead,
+};
