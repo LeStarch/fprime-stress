@@ -58,6 +58,9 @@ class DoomEngineTester final : public DoomEngineGTestBase {
     void testKeyRejectedThrottleReArmsOnReset();
     void testRateTelemetryWindow();
     void testValidateWadWalksChunkedDirectory();
+    void testWadFileOpenReadClose();
+    void testWadFileRejectsMissingPath();
+    void testWadFilePoolExhaustion();
     void testStartCommandRejectsWhenRunning();
     void testHeartbeatSelfHealsStaleRunning();
 

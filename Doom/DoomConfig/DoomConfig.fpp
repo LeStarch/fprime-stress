@@ -8,15 +8,21 @@
 module Doom {
 
   # ----------------------------------------------------------------------
-  # Fixed engine geometry. Must match the DOOMGENERIC_RESX/RESY compile
-  # definitions on the upstream engine; do not change independently.
+  # Engine geometry. DOOM renders 320x200 natively; doomgeneric can
+  # upscale that by an integer factor (DOOM_FRAME_SCALE, a CMake cache
+  # variable read by Doom/DoomEngine/CMakeLists.txt, default 1). These
+  # constants must equal 320 * DOOM_FRAME_SCALE x 200 * DOOM_FRAME_SCALE;
+  # DoomEngine.cpp static_asserts the match. Keep the native geometry on
+  # small targets: the upscale writes FRAME_WIDTH * FRAME_HEIGHT bytes per
+  # frame and can cost more than the renderer itself when the frame lives
+  # in slow external memory.
   # ----------------------------------------------------------------------
 
-  @ Width of the full-resolution DOOM frame in pixels.
-  constant FRAME_WIDTH = 640
+  @ Width of the full-resolution DOOM frame in pixels (320 * DOOM_FRAME_SCALE).
+  constant FRAME_WIDTH = 320
 
-  @ Height of the full-resolution DOOM frame in scanlines.
-  constant FRAME_HEIGHT = 400
+  @ Height of the full-resolution DOOM frame in scanlines (200 * DOOM_FRAME_SCALE).
+  constant FRAME_HEIGHT = 200
 
   @ Number of palette bytes (256 entries * 3 bytes per RGB triple).
   constant PALETTE_BYTES = 768
@@ -29,8 +35,9 @@ module Doom {
   # ----------------------------------------------------------------------
 
   @ Downsample factor applied to each frame dimension. Must divide
-  @ FRAME_WIDTH and FRAME_HEIGHT evenly: 1, 2, 4, 8, or 16.
-  constant DOWNSAMPLE_FACTOR = 2
+  @ FRAME_WIDTH and FRAME_HEIGHT evenly: 1, 2, 4, 8, or 16 (at the
+  @ native 320x200 geometry: 1, 2, 4 or 8).
+  constant DOWNSAMPLE_FACTOR = 1
 
   @ Width in pixels of the downsampled frame (and of each FrameRow).
   constant DOWNSAMPLED_WIDTH = FRAME_WIDTH / DOWNSAMPLE_FACTOR
@@ -45,7 +52,7 @@ module Doom {
 
   @ Capacity (in frames) of the screen-wipe melt playback ring. The
   @ melt animation spans roughly 40-70 engine draws; each slot costs
-  @ FRAME_WIDTH * FRAME_HEIGHT bytes (80 -> ~20.5 MB). Reduce on
+  @ FRAME_WIDTH * FRAME_HEIGHT bytes (80 -> 5 MB at 320x200). Reduce on
   @ memory-constrained systems: overflowing frames are dropped and
   @ counted, and the wipe cuts to the live frame early.
   constant MELT_QUEUE_CAPACITY = 80

@@ -88,16 +88,18 @@ flowchart LR
     DE -.uses.-> BM
 ```
 
-DOOM's frame buffer (640 × 400 palette-indexed pixels = **256 kB per
-frame**) is too large to ship as a single FPP telemetry sample
+DOOM's frame buffer (320 × 200 palette-indexed pixels = **64 kB per
+frame** natively; `DOOM_FRAME_SCALE=2` at CMake configure time selects
+doomgeneric's 640 × 400 upscale, 256 kB, for larger processors) is too
+large to ship as a single FPP telemetry sample
 under F Prime's `FW_COM_BUFFER_MAX_SIZE` limit (512 B by default).
 The engine sends the complete frame out a synchronous `Doom.RawFrame`
 port as an `Fw::Buffer`; a passive `FrameDownsampler` decimates it in
 place by a compile-time power-of-two factor (`Doom.DOWNSAMPLE_FACTOR`
-in `Doom/DoomConfig/DoomConfig.fpp`: 1..16, default 2), and a passive
+in `Doom/DoomConfig/DoomConfig.fpp`: 1..16, default 1), and a passive
 `FrameTlmProcessor` emits one
 `Doom.FrameRow` telemetry channel per downsampled scanline. At the
-default X2 (320 × 200) that is 200 rows per frame, 35 frames per
+native 320 × 200 that is 200 rows per frame, 35 frames per
 second (DOOM's native cadence), 7,000 rows per second of sustained
 downlink — every one of those is a real F Prime message flowing
 through the real F Prime telemetry pipeline. The whole path is
@@ -120,8 +122,8 @@ produces one surviving sample per row instead of one per frame. A
 function-pointer dispatch table in `FrameTlmProcessor` maps the row
 index to the matching `tlmWrite_FrameRowNNN` member function so the
 per-cycle loop stays a tight `for` over the downsampled height —
-only rows `0..height-1` are emitted, so an X2 frame touches 200
-channels and an X16 frame touches 25. The browser plugin subscribes
+only rows `0..height-1` are emitted, so a native frame touches 200
+channels and an X4 frame touches 50. The browser plugin subscribes
 to all 400 channel ids and reassembles the downsampled frame as
 cycles arrive — the multiplex is the same pattern a real
 flight payload streaming frame-rate imagery would use, and is the

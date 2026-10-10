@@ -90,8 +90,8 @@ set(DOOMGENERIC_SOURCES
     "${DOOMGENERIC_DIR}/tables.c"
     "${DOOMGENERIC_DIR}/v_video.c"
     "${DOOMGENERIC_DIR}/w_checksum.c"
+    # w_file_stdc.c (C stdio) is replaced by the Os::File wad_file_class_t in WadFile.cpp
     "${DOOMGENERIC_DIR}/w_file.c"
-    "${DOOMGENERIC_DIR}/w_file_stdc.c"
     "${DOOMGENERIC_DIR}/w_main.c"
     "${DOOMGENERIC_DIR}/w_wad.c"
     "${DOOMGENERIC_DIR}/wi_stuff.c"
@@ -109,13 +109,23 @@ target_include_directories(fprime_stress_doomgeneric
         "${DOOMGENERIC_DIR}"
 )
 # Upstream DOOM uses CMAP256 to render a palette-indexed 8-bit frame.
-# We use doomgeneric's native 640x400 resolution to make this a useful
-# stress test - 256 kB / frame * 35 Hz = 9.0 MB/s raw before downsampling.
+# DOOM renders 320x200; doomgeneric upscales by an integer factor in
+# I_FinishUpdate. DOOM_FRAME_SCALE=1 (default) keeps the native 64 kB frame;
+# 2 gives 640x400 (256 kB / frame * 35 Hz = 9.0 MB/s raw) for larger
+# processors. Doom.FRAME_WIDTH/HEIGHT in DoomConfig.fpp must match
+# (DoomEngine.cpp static_asserts it).
+set(DOOM_FRAME_SCALE "1" CACHE STRING
+    "Integer upscale of DOOM's native 320x200 frame (must match Doom.FRAME_WIDTH/HEIGHT)")
+if(NOT DOOM_FRAME_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "DOOM_FRAME_SCALE must be a positive integer, got '${DOOM_FRAME_SCALE}'")
+endif()
+math(EXPR DOOMGENERIC_RESX "320 * ${DOOM_FRAME_SCALE}")
+math(EXPR DOOMGENERIC_RESY "200 * ${DOOM_FRAME_SCALE}")
 target_compile_definitions(fprime_stress_doomgeneric
     PUBLIC
         CMAP256
-        DOOMGENERIC_RESX=640
-        DOOMGENERIC_RESY=400
+        DOOMGENERIC_RESX=${DOOMGENERIC_RESX}
+        DOOMGENERIC_RESY=${DOOMGENERIC_RESY}
         NORMALUNIX
         LINUX
         _DEFAULT_SOURCE
@@ -149,6 +159,7 @@ register_fprime_module(
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.fpp"
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/WadFile.cpp"
     HEADERS
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.hpp"
     DEPENDS
@@ -156,6 +167,10 @@ register_fprime_module(
         Fw_Logger
         fprime_stress_doomgeneric
 )
+
+# w_file.c resolves stdc_wad_file from WadFile.cpp, so the two static libraries depend on
+# each other; declaring the cycle makes CMake repeat them on the link line.
+target_link_libraries(fprime_stress_doomgeneric INTERFACE Doom_DoomEngine)
 
 ### UTs ###
 register_fprime_ut(

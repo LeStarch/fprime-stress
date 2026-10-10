@@ -183,6 +183,21 @@ TEST(Nominal, ValidateWadWalksChunkedDirectory) {
     tester->testValidateWadWalksChunkedDirectory();
 }
 
+TEST(Nominal, WadFileOpenReadClose) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testWadFileOpenReadClose();
+}
+
+TEST(OffNominal, WadFileRejectsMissingPath) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testWadFileRejectsMissingPath();
+}
+
+TEST(OffNominal, WadFilePoolExhaustion) {
+    auto tester = std::make_unique<Doom::DoomEngineTester>();
+    tester->testWadFilePoolExhaustion();
+}
+
 TEST(Nominal, VariableRateContextAdvancesClock) {
     // Heap-allocated: the melt frame buffer is too large for the stack.
     auto tester = std::make_unique<Doom::DoomEngineTester>();

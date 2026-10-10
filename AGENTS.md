@@ -57,7 +57,7 @@ engine binding: check what stock `m_menu.c` / `g_game.c` do with it.
 | Path | Contents |
 | --- | --- |
 | `Doom/Doom.fpp` | Shared constants, structs, enums, ports. Model is source of truth. |
-| `Doom/DoomEngine/` | Passive component hosting stock `doomgeneric` (git submodule; do not edit). |
+| `Doom/DoomEngine/` | Passive component hosting stock `doomgeneric` (git submodule; do not edit); `WadFile.cpp` is the `Os::File` WAD reader the engine uses instead of C stdio. |
 | `Doom/FrameDownsampler/`, `Doom/FrameTlmProcessor/` | Frame pipeline components. |
 | `Doom/DoomSubtopology/` | Subtopology wiring the pipeline. |
 | `tools/fprime-get-doom/` | WAD fetch CLI. |

@@ -227,9 +227,11 @@ class DoomEngine final : public DoomEngineComponentBase {
     static constexpr U16 KEY_ENTRY_TIC_BARRIER = static_cast<U16>(1U << 9);
 
     //! Send one full frame out the frameOut port (after the palette on
-    //! paletteOut). src holds FRAME_BYTES of 8-bit palette indices; it
-    //! is copied into m_frameBuffer, which downstream may mutate.
-    void emitFrame(const U8* src, U32 frameNumber);
+    //! paletteOut). src holds FRAME_BYTES of 8-bit palette indices and
+    //! is handed to downstream directly, which may pack it in place:
+    //! the engine rewrites every byte of DG_ScreenBuffer on each draw
+    //! and the melt ring slots are consumed as they are played back.
+    void emitFrame(U8* src, U32 frameNumber);
 
     //! Capture the active DOOM palette out of the engine's color table.
     //! Bumps m_paletteGeneration if anything changed. Rate-group thread.
@@ -377,11 +379,6 @@ class DoomEngine final : public DoomEngineComponentBase {
 
     //! Frames dropped because the melt buffer was full.
     U32 m_framesDropped;
-
-    //! Engine-owned copy of the frame sent out frameOut. Downstream
-    //! (the downsampler) mutates it in place during the port call, so
-    //! the live DG_ScreenBuffer cannot be sent directly.
-    U8 m_frameBuffer[FRAME_BYTES];
 
     // ------------------------------------------------------------------
     // Configuration
