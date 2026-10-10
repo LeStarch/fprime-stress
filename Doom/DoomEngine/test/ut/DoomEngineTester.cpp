@@ -5,6 +5,7 @@
 
 #include "Doom/DoomEngine/test/ut/DoomEngineTester.hpp"
 #include "Doom/DoomConfig/FppConstantsAc.hpp"
+#include "Doom/DoomEngine/WadFile.hpp"
 
 #include <Os/File.hpp>
 #include <Os/FileSystem.hpp>
@@ -18,6 +19,12 @@ void fprime_doom_upstream_exit(int status);
 }
 
 #include <csetjmp>
+#include <cstring>
+
+extern "C" {
+#include "Doom/DoomEngine/doomgeneric/doomgeneric/w_file.h"
+extern wad_file_class_t stdc_wad_file;
+}
 
 namespace Doom {
 
@@ -923,6 +930,90 @@ void DoomEngineTester::testForceStartWhenAlreadyRunning() {
     ASSERT_TRUE(this->component.m_startRequested.load());
     ASSERT_TLM_State_SIZE(0);
     this->component.m_startRequested.store(false);
+}
+
+}  // namespace Doom
+
+namespace Doom {
+
+// ----------------------------------------------------------------------
+// WadFile: the Os::File wad_file_class_t handed to doomgeneric
+// ----------------------------------------------------------------------
+
+void DoomEngineTester::testWadFileOpenReadClose() {
+    static char PATH[] = "/tmp/DoomEngineTester_wadfile.wad";
+    static const U8 BYTES[] = {'I', 'W', 'A', 'D', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    this->writeFixtureWad(PATH, BYTES, sizeof(BYTES));
+    ASSERT_EQ(Doom::WadFile::openCount(), 0U);
+
+    wad_file_t* const wad = stdc_wad_file.OpenFile(PATH);
+    ASSERT_NE(wad, nullptr);
+    ASSERT_EQ(wad->file_class, &stdc_wad_file);
+    ASSERT_EQ(wad->mapped, nullptr);
+    ASSERT_EQ(wad->length, sizeof(BYTES));
+    ASSERT_EQ(Doom::WadFile::openCount(), 1U);
+
+    // Whole file from the start
+    U8 out[sizeof(BYTES)] = {};
+    ASSERT_EQ(stdc_wad_file.Read(wad, 0, out, sizeof(out)), sizeof(BYTES));
+    ASSERT_EQ(memcmp(out, BYTES, sizeof(BYTES)), 0);
+
+    // Offset read
+    U8 mid[4] = {};
+    ASSERT_EQ(stdc_wad_file.Read(wad, 4, mid, sizeof(mid)), sizeof(mid));
+    ASSERT_EQ(memcmp(mid, BYTES + 4, sizeof(mid)), 0);
+
+    // Request past the end returns the short count
+    U8 tail[8] = {};
+    ASSERT_EQ(stdc_wad_file.Read(wad, sizeof(BYTES) - 3, tail, sizeof(tail)), 3U);
+    ASSERT_EQ(memcmp(tail, BYTES + sizeof(BYTES) - 3, 3), 0);
+
+    // Offset beyond the end reads nothing
+    ASSERT_EQ(stdc_wad_file.Read(wad, sizeof(BYTES) + 100, tail, sizeof(tail)), 0U);
+
+    stdc_wad_file.CloseFile(wad);
+    ASSERT_EQ(Doom::WadFile::openCount(), 0U);
+    Os::FileSystem::removeFile(PATH);
+}
+
+void DoomEngineTester::testWadFileRejectsMissingPath() {
+    static char MISSING[] = "/tmp/DoomEngineTester_wadfile_missing.wad";
+    Os::FileSystem::removeFile(MISSING);
+    ASSERT_EQ(stdc_wad_file.OpenFile(MISSING), nullptr);
+    ASSERT_EQ(stdc_wad_file.OpenFile(nullptr), nullptr);
+    ASSERT_EQ(Doom::WadFile::openCount(), 0U);
+}
+
+void DoomEngineTester::testWadFilePoolExhaustion() {
+    static char PATH[] = "/tmp/DoomEngineTester_wadfile_pool.wad";
+    static const U8 BYTES[] = {'I', 'W', 'A', 'D'};
+    this->writeFixtureWad(PATH, BYTES, sizeof(BYTES));
+
+    wad_file_t* handles[Doom::WadFile::MAX_OPEN] = {};
+    for (FwSizeType i = 0; i < Doom::WadFile::MAX_OPEN; i++) {
+        handles[i] = stdc_wad_file.OpenFile(PATH);
+        ASSERT_NE(handles[i], nullptr) << "slot " << i;
+        ASSERT_EQ(Doom::WadFile::openCount(), i + 1);
+    }
+    // Every slot is taken: the next open fails cleanly rather than allocating
+    ASSERT_EQ(stdc_wad_file.OpenFile(PATH), nullptr);
+    ASSERT_EQ(Doom::WadFile::openCount(), Doom::WadFile::MAX_OPEN);
+
+    // Releasing one slot makes exactly one more open possible, and the handles stay distinct
+    stdc_wad_file.CloseFile(handles[1]);
+    ASSERT_EQ(Doom::WadFile::openCount(), Doom::WadFile::MAX_OPEN - 1);
+    handles[1] = stdc_wad_file.OpenFile(PATH);
+    ASSERT_NE(handles[1], nullptr);
+    for (FwSizeType i = 0; i < Doom::WadFile::MAX_OPEN; i++) {
+        for (FwSizeType j = i + 1; j < Doom::WadFile::MAX_OPEN; j++) {
+            ASSERT_NE(handles[i], handles[j]);
+        }
+    }
+    for (FwSizeType i = 0; i < Doom::WadFile::MAX_OPEN; i++) {
+        stdc_wad_file.CloseFile(handles[i]);
+    }
+    ASSERT_EQ(Doom::WadFile::openCount(), 0U);
+    Os::FileSystem::removeFile(PATH);
 }
 
 }  // namespace Doom

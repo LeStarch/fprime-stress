@@ -14,8 +14,8 @@ module Doom {
   # constants must equal 320 * DOOM_FRAME_SCALE x 200 * DOOM_FRAME_SCALE;
   # DoomEngine.cpp static_asserts the match. Keep the native geometry on
   # small targets: the upscale writes FRAME_WIDTH * FRAME_HEIGHT bytes per
-  # frame and costs more than the renderer itself on a Cortex-M7 with the
-  # frame in external PSRAM.
+  # frame and can cost more than the renderer itself when the frame lives
+  # in slow external memory.
   # ----------------------------------------------------------------------
 
   @ Width of the full-resolution DOOM frame in pixels (320 * DOOM_FRAME_SCALE).

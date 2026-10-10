@@ -90,7 +90,7 @@ set(DOOMGENERIC_SOURCES
     "${DOOMGENERIC_DIR}/tables.c"
     "${DOOMGENERIC_DIR}/v_video.c"
     "${DOOMGENERIC_DIR}/w_checksum.c"
-    # w_file_stdc.c (C stdio) is replaced by the Os::File wad_file_class_t in DoomEngine.cpp
+    # w_file_stdc.c (C stdio) is replaced by the Os::File wad_file_class_t in WadFile.cpp
     "${DOOMGENERIC_DIR}/w_file.c"
     "${DOOMGENERIC_DIR}/w_main.c"
     "${DOOMGENERIC_DIR}/w_wad.c"
@@ -159,6 +159,7 @@ register_fprime_module(
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.fpp"
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/WadFile.cpp"
     HEADERS
         "${CMAKE_CURRENT_LIST_DIR}/DoomEngine.hpp"
     DEPENDS
@@ -166,6 +167,10 @@ register_fprime_module(
         Fw_Logger
         fprime_stress_doomgeneric
 )
+
+# w_file.c resolves stdc_wad_file from WadFile.cpp, so the two static libraries depend on
+# each other; declaring the cycle makes CMake repeat them on the link line.
+target_link_libraries(fprime_stress_doomgeneric INTERFACE Doom_DoomEngine)
 
 ### UTs ###
 register_fprime_ut(
