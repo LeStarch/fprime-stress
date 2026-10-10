@@ -109,13 +109,23 @@ target_include_directories(fprime_stress_doomgeneric
         "${DOOMGENERIC_DIR}"
 )
 # Upstream DOOM uses CMAP256 to render a palette-indexed 8-bit frame.
-# We use doomgeneric's native 640x400 resolution to make this a useful
-# stress test - 256 kB / frame * 35 Hz = 9.0 MB/s raw before downsampling.
+# DOOM renders 320x200; doomgeneric upscales by an integer factor in
+# I_FinishUpdate. DOOM_FRAME_SCALE=1 (default) keeps the native 64 kB frame;
+# 2 gives 640x400 (256 kB / frame * 35 Hz = 9.0 MB/s raw) for larger
+# processors. Doom.FRAME_WIDTH/HEIGHT in DoomConfig.fpp must match
+# (DoomEngine.cpp static_asserts it).
+set(DOOM_FRAME_SCALE "1" CACHE STRING
+    "Integer upscale of DOOM's native 320x200 frame (must match Doom.FRAME_WIDTH/HEIGHT)")
+if(NOT DOOM_FRAME_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "DOOM_FRAME_SCALE must be a positive integer, got '${DOOM_FRAME_SCALE}'")
+endif()
+math(EXPR DOOMGENERIC_RESX "320 * ${DOOM_FRAME_SCALE}")
+math(EXPR DOOMGENERIC_RESY "200 * ${DOOM_FRAME_SCALE}")
 target_compile_definitions(fprime_stress_doomgeneric
     PUBLIC
         CMAP256
-        DOOMGENERIC_RESX=640
-        DOOMGENERIC_RESY=400
+        DOOMGENERIC_RESX=${DOOMGENERIC_RESX}
+        DOOMGENERIC_RESY=${DOOMGENERIC_RESY}
         NORMALUNIX
         LINUX
         _DEFAULT_SOURCE

@@ -12,8 +12,9 @@ namespace Doom {
 
 class FrameTlmProcessor final : public FrameTlmProcessorComponentBase {
   public:
-    //! Maximum number of row channels (FrameRow000..FrameRow399).
-    static constexpr U16 MAX_ROWS = Doom::FRAME_HEIGHT;
+    //! Number of row channels enumerated in FrameTlmProcessorTelemetry.fppi
+    //! (FrameRow000..FrameRow399), independent of the frame geometry.
+    static constexpr U16 MAX_ROWS = 400;
 
     //! Exact pixels per row channel (configured downsampled width).
     static constexpr U16 ROW_WIDTH = Doom::DOWNSAMPLED_WIDTH;

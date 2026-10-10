@@ -98,7 +98,6 @@ DoomEngine::DoomEngine(const char* compName)
     (void)::memset(m_argvPointers, 0, sizeof(m_argvPointers));
     (void)::memset(m_meltFrames, 0, sizeof(m_meltFrames));
     (void)::memset(m_meltFrameNumbers, 0, sizeof(m_meltFrameNumbers));
-    (void)::memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
 }
 
 DoomEngine::~DoomEngine() {
@@ -704,7 +703,7 @@ void DoomEngine::platformDrawFrame() {
     // CMAP256 only the first RESX * RESY bytes are written and they are
     // 8-bit palette indices.
     FW_ASSERT(DG_ScreenBuffer != nullptr);
-    const U8* const src = reinterpret_cast<const U8*>(DG_ScreenBuffer);
+    U8* const src = reinterpret_cast<U8*>(DG_ScreenBuffer);
 
     m_framesProduced++;
     m_framesThisWindow++;
@@ -729,7 +728,7 @@ void DoomEngine::platformDrawFrame() {
     this->emitFrame(src, static_cast<U32>(m_framesProduced));
 }
 
-void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
+void DoomEngine::emitFrame(U8* src, U32 frameNumber) {
     FW_ASSERT(src != nullptr);
     this->capturePaletteIfChanged();
 
@@ -743,12 +742,14 @@ void DoomEngine::emitFrame(const U8* src, U32 frameNumber) {
         m_frameBytesThisWindow += static_cast<U32>(Doom::PALETTE_BYTES);
     }
 
-    // Copy into engine-owned storage: the downstream downsampler packs
-    // the buffer in place, and DOOM partially redraws DG_ScreenBuffer
-    // between frames, so the live buffer must not be handed out.
+    // The buffer is handed out without a copy. The downstream
+    // downsampler packs it in place, which is harmless: I_FinishUpdate
+    // rewrites every byte of DG_ScreenBuffer from I_VideoBuffer on each
+    // draw (DOOM never reads DG_ScreenBuffer back), and a melt slot is
+    // released as soon as it has been played back. On a Cortex-M7 with
+    // the frame in QSPI PSRAM the copy cost more than the renderer.
     if (this->isConnected_frameOut_OutputPort(0)) {
-        (void)::memcpy(m_frameBuffer, src, FRAME_BYTES);
-        Fw::Buffer pixels(m_frameBuffer, FRAME_BYTES);
+        Fw::Buffer pixels(src, FRAME_BYTES);
         this->frameOut_out(0, frameNumber, FRAME_WIDTH, FRAME_HEIGHT, pixels);
         m_frameBytesThisWindow += FRAME_BYTES;
     }

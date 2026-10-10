@@ -10,8 +10,8 @@ against a running ReferenceDeployment, e.g.:
 The downsample factor is a compile-time configuration value
 (Doom.DOWNSAMPLE_FACTOR in Doom/DoomConfig/DoomConfig.fpp); the tests
 read the configured width from the dictionary (FrameRow pixel array
-length) and derive the height from the fixed 640x400 native frame,
-never from the sample under test. FrameRow000..399 channels exist for
+length) and derive the height from DOOM's fixed 320:200 aspect ratio
+(the same at any DOOM_FRAME_SCALE), never from the sample under test. FrameRow000..399 channels exist for
 every factor; only the first height of them are emitted.
 """
 
@@ -22,8 +22,11 @@ import pytest
 DOOM = "DoomSubtopology.doom"
 TLM_PROC = "DoomSubtopology.frameTlmProcessor"
 
-FULL_WIDTH = 640
-FULL_HEIGHT = 400
+# DOOM's native geometry; DOOM_FRAME_SCALE multiplies both, so the aspect
+# ratio is what fixes the downsampled height for a given row width.
+NATIVE_WIDTH = 320
+NATIVE_HEIGHT = 200
+ROW_CHANNELS = 400
 PALETTE_ENTRIES = 256
 PALETTE_BYTES = 3 * PALETTE_ENTRIES
 
@@ -33,13 +36,13 @@ def configured_frame_size(fprime_test_api):
     ch_dict = fprime_test_api.pipeline.dictionaries.channel_name
     row_pattern = re.compile(re.escape(TLM_PROC) + r"\.FrameRow(\d{3})$")
     rows = sorted(int(m.group(1)) for m in map(row_pattern.match, ch_dict) if m)
-    assert rows == list(range(FULL_HEIGHT)), "FrameRow channels are not FrameRow000..399"
+    assert rows == list(range(ROW_CHANNELS)), "FrameRow channels are not FrameRow000..399"
     members = dict((name, typ) for name, typ, _, _ in ch_dict[TLM_PROC + ".FrameRow000"].get_type_obj().MEMBER_LIST)
     width = members["pixels"].LENGTH
-    assert FULL_WIDTH % width == 0, "width {} does not divide 640".format(width)
-    factor = FULL_WIDTH // width
-    assert factor in (1, 2, 4, 8, 16), "unsupported factor {}".format(factor)
-    return width, FULL_HEIGHT // factor
+    assert (width * NATIVE_HEIGHT) % NATIVE_WIDTH == 0, "width {} is not a 320:200 frame width".format(width)
+    height = width * NATIVE_HEIGHT // NATIVE_WIDTH
+    assert 0 < height <= ROW_CHANNELS, "unsupported downsampled height {}".format(height)
+    return width, height
 
 
 def await_row(fprime_test_api, row, timeout=30):
