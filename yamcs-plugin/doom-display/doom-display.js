@@ -16,8 +16,8 @@
  * Data path: a WebSocket "packets" subscription on the tm_realtime stream
  * delivers every raw downlinked space packet (base64). Packetized
  * telemetry (Svc.TlmPacketizer, APID 4) is decoded directly from the raw
- * bytes: each FrameRowNNN packet carries one Doom.FrameRow struct (one
- * downsampled scanline) and the Palette packet carries the Doom.Palette
+ * bytes: each FrameRow packet carries one or more consecutive Doom.FrameRow
+ * structs (one downsampled scanline each) and the Palette packet carries the Doom.Palette
  * struct. Raw packets are used instead of parameter subscriptions
  * because a 640-element array parameter encoded as protobuf-JSON is
  * roughly 10x the size of its binary form - at up to 400 rows x 35 Hz
@@ -295,19 +295,33 @@ class DoomDisplay {
         }
         const packetId = (bytes[PKT_ID_OFFSET] << 8) | bytes[PKT_ID_OFFSET + 1];
         if (this.frameRowPacketIds.has(packetId)) {
-            this.absorbRow(bytes);
+            this.absorbRows(bytes);
         } else if (packetId === this.palettePacketId) {
             this.absorbPalette(bytes);
         }
     }
 
-    absorbRow(bytes) {
-        const view = new DataView(bytes.buffer, bytes.byteOffset + PKT_DATA_OFFSET);
+    // A FrameRow packet may carry several consecutive FrameRow structs; each
+    // occupies ROW_PIXELS_OFFSET + width bytes on the wire.
+    absorbRows(bytes) {
+        let offset = PKT_DATA_OFFSET;
+        while (offset + ROW_PIXELS_OFFSET <= bytes.length) {
+            const next = this.absorbRow(bytes, offset);
+            if (next <= offset) {
+                return;
+            }
+            offset = next;
+        }
+    }
+
+    // Returns the offset just past the row, or -1 if the row is malformed.
+    absorbRow(bytes, offset) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + offset);
         const frame = view.getUint32(0);
         const row = view.getUint16(4);
         const width = view.getUint16(6);
         if (width < 1 || width > MAX_WIDTH || row >= MAX_ROWS) {
-            return;
+            return -1;
         }
         // Both dimensions shrink by the same downsample factor, so the
         // frame height follows from the row width.
@@ -318,9 +332,9 @@ class DoomDisplay {
             this.pixels.fill(0);
             this.imageData = null;
         }
-        const source = PKT_DATA_OFFSET + ROW_PIXELS_OFFSET;
+        const source = offset + ROW_PIXELS_OFFSET;
         if (bytes.length < source + width) {
-            return;
+            return -1;
         }
         this.pixels.set(bytes.subarray(source, source + width), row * width);
         this.rowsReceived++;
@@ -336,6 +350,7 @@ class DoomDisplay {
             }
             this.scheduleDraw();
         }
+        return source + width;
     }
 
     absorbEngineState(data) {
